@@ -394,6 +394,20 @@ func (c *Client) FetchManagementAPIKeys(ctx context.Context) (*response.Manageme
 	return result, nil
 }
 
+// FetchKeyPolicyKeys reads the cpa-plugin-key-policy public catalog.
+// Non-2xx responses return (result with StatusCode, err) so the service layer can
+// distinguish 404/501 absent from hard failures without client-side enums.
+func (c *Client) FetchKeyPolicyKeys(ctx context.Context) (*response.KeyPolicyKeysResult, error) {
+	result := &response.KeyPolicyKeysResult{}
+	statusCode, body, err := c.doManagementJSONRequest(ctx, cpaManagementKeyPolicyKeysEndpoint, &result.Payload, "key-policy keys")
+	result.StatusCode = statusCode
+	result.Body = body
+	if err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
 func (c *Client) FetchUsageQueue(ctx context.Context, count int) (*response.UsageQueueResult, error) {
 	result := &response.UsageQueueResult{}
 	if count <= 0 {

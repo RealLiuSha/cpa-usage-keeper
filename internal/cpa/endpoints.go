@@ -1,9 +1,12 @@
 package cpa
 
 const (
-	cpaManagementAuthFilesEndpoint           = "/v0/management/auth-files"
-	cpaManagementAuthFilesStatusEndpoint     = "/v0/management/auth-files/status"
-	cpaManagementAPIKeysEndpoint             = "/v0/management/api-keys"
+	cpaManagementAuthFilesEndpoint       = "/v0/management/auth-files"
+	cpaManagementAuthFilesStatusEndpoint = "/v0/management/auth-files/status"
+	cpaManagementAPIKeysEndpoint         = "/v0/management/api-keys"
+	// cpaManagementKeyPolicyKeysEndpoint is the public catalog of cpa-plugin-key-policy keys.
+	// Must keep the /v0/management prefix (Manager's relative path is different).
+	cpaManagementKeyPolicyKeysEndpoint       = "/v0/management/plugins/cpa-key-policy/keys"
 	cpaManagementVertexAPIKeyEndpoint        = "/v0/management/vertex-api-key"
 	cpaManagementGeminiAPIKeyEndpoint        = "/v0/management/gemini-api-key"
 	cpaManagementCodexAPIKeyEndpoint         = "/v0/management/codex-api-key"

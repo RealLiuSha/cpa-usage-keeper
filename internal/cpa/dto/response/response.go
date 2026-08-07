@@ -16,6 +16,14 @@ type ManagementAPIKeysResult struct {
 	Payload    cpaapikeys.ManagementAPIKeysResponse
 }
 
+// KeyPolicyKeysResult is the HTTP wrapper for FetchKeyPolicyKeys.
+// Service layer classifies ready/absent/error from StatusCode + err; client does not invent enums.
+type KeyPolicyKeysResult struct {
+	StatusCode int
+	Body       []byte
+	Payload    cpaapikeys.KeyPolicyKeysResponse
+}
+
 // ModelsResult 是 FetchModels 返回的 HTTP 包装，保留状态码、原始响应体和解析后的 DTO。
 type ModelsResult struct {
 	StatusCode int

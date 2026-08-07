@@ -2,12 +2,22 @@ import React from 'react';
 import '@/i18n';
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ApiKeySettingsCard, copyApiKeyToClipboard, getApiKeySettingsVisibleKey } from './ApiKeySettingsCard';
+import { ApiKeySettingsCard, copyApiKeyToClipboard, getApiKeySettingsVisibleKey, isPluginKeyPolicySource } from './ApiKeySettingsCard';
 import type { CpaApiKeySettingsItem } from '@/lib/types';
 
 const apiKeys: CpaApiKeySettingsItem[] = [
-  { id: '9007199254740993', apiKey: 'sk-alpha123456', keyAlias: 'Primary', displayKey: 'sk-*********123456', label: 'Primary', lastSyncedAt: '2026-05-13T00:00:00Z' },
-  { id: '9007199254740994', apiKey: 'sk-beta654321', keyAlias: '', displayKey: 'sk-*********654321', label: 'sk-*********654321', lastSyncedAt: null },
+  { id: '9007199254740993', apiKey: 'sk-alpha123456', keyAlias: 'Primary', displayKey: 'sk-*********123456', label: 'Primary', source: 'native', enabled: true, lastSyncedAt: '2026-05-13T00:00:00Z' },
+  { id: '9007199254740994', apiKey: 'sk-beta654321', keyAlias: '', displayKey: 'sk-*********654321', label: 'sk-*********654321', source: 'native', enabled: true, lastSyncedAt: null },
+  {
+    id: '9007199254740995',
+    apiKey: 'team-a',
+    keyAlias: 'Team A',
+    displayKey: 'cpa_Ab…xy12',
+    label: 'Team A',
+    source: 'plugin:cpa-key-policy',
+    enabled: false,
+    lastSyncedAt: '2026-08-07T00:00:00Z',
+  },
 ];
 
 const renderCard = (props: Partial<React.ComponentProps<typeof ApiKeySettingsCard>> = {}) => renderToStaticMarkup(
@@ -44,9 +54,23 @@ describe('ApiKeySettingsCard', () => {
     expect(html).not.toContain('api_key');
   });
 
-  it('uses the title eye toggle state to choose masked or raw keys', () => {
+  it('shows source badge, disabled state, logical ID label, and no copy for plugin rows', () => {
+    const html = renderCard();
+    expect(html).toContain('Key Policy');
+    expect(html).toContain('Disabled');
+    expect(html).toContain('Logical ID');
+    expect(html).toContain('cpa_Ab…xy12');
+    expect(html).toContain('Team A');
+    // Copy only on native rows (2), not on plugin.
+    expect(countOccurrences(html, '>Copy<')).toBe(2);
+    expect(isPluginKeyPolicySource('plugin:cpa-key-policy')).toBe(true);
+    expect(isPluginKeyPolicySource('native')).toBe(false);
+  });
+
+  it('uses the title eye toggle state to choose masked or raw keys for native only', () => {
     expect(getApiKeySettingsVisibleKey(apiKeys[0], false)).toBe('sk-*********123456');
     expect(getApiKeySettingsVisibleKey(apiKeys[0], true)).toBe('sk-alpha123456');
+    expect(getApiKeySettingsVisibleKey(apiKeys[2], true)).toBe('cpa_Ab…xy12');
   });
 
   it('copies the raw key value', async () => {

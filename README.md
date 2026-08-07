@@ -76,6 +76,7 @@ CPA Usage Keeper is a standalone persistence and analytics dashboard for [CLIPro
 - Opt into community rankings by overall score, tokens, requests, cache rate, average TTFT/latency, or peak TPM/RPM
 - Open a read-only usage view scoped to an individual CPA API Key
 - Sync CPA Auth Files, API Keys, and AI Providers automatically, and maintain model pricing for cost estimates
+- Analyze downstream keys issued by the [cpa-plugin-key-policy](https://github.com/router-for-me/cpa-plugin-key-policy) plugin: Keeper periodically syncs the plugin public catalog, joins usage by the plugin logical id, and surfaces those keys in Analysis, Ranking, and API Key filters (plugin secrets are never stored as login credentials)
 - Deploy with Docker/Docker Compose, Homebrew, binaries, or systemd, with optional password protection
 - Embed the Keeper dashboard in CPAMC through the CPA plugin
 

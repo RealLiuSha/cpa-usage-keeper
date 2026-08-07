@@ -289,7 +289,7 @@ func (h *authHandler) apiKeyLogin(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
-	row, err := h.cpaAPIKeyProvider.FindActiveCPAAPIKeyByValue(c.Request.Context(), request.APIKey)
+	row, err := h.cpaAPIKeyProvider.FindActiveNativeCPAAPIKeyByValue(c.Request.Context(), request.APIKey)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return

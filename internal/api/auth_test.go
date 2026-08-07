@@ -33,7 +33,7 @@ func (s *authCPAAPIKeyStub) ListCPAAPIKeys(context.Context) ([]entities.CPAAPIKe
 	return []entities.CPAAPIKey{s.row}, nil
 }
 
-func (s *authCPAAPIKeyStub) FindActiveCPAAPIKeyByValue(_ context.Context, apiKey string) (entities.CPAAPIKey, error) {
+func (s *authCPAAPIKeyStub) FindActiveNativeCPAAPIKeyByValue(_ context.Context, apiKey string) (entities.CPAAPIKey, error) {
 	s.byValueCall++
 	s.byValueKey = apiKey
 	if s.findErr != nil {

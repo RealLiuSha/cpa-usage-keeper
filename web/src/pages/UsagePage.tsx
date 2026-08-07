@@ -1087,7 +1087,17 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const apiKeySelectOptions = useMemo(
     () => [
       { value: '', label: t('usage_stats.api_key_filter_all') },
-      ...apiKeyOptions.map((option) => ({ value: option.id, label: option.label })),
+      ...apiKeyOptions.map((option) => {
+        const tags: string[] = [];
+        if (option.source === 'plugin:cpa-key-policy') {
+          tags.push(t('usage_stats.api_key_source_key_policy'));
+        }
+        if (option.source === 'plugin:cpa-key-policy' && option.enabled === false) {
+          tags.push(t('usage_stats.api_key_enabled_false'));
+        }
+        const label = tags.length > 0 ? `${option.label} (${tags.join(' · ')})` : option.label;
+        return { value: option.id, label };
+      }),
     ],
     [apiKeyOptions, t],
   );

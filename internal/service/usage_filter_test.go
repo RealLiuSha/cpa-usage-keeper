@@ -263,6 +263,69 @@ func TestUsageServiceResolvesAPIKeyIDForUsageQueries(t *testing.T) {
 	}
 }
 
+func TestUsageServiceResolvesPluginAPIKeyIDForUsageQueries(t *testing.T) {
+	// Mirror TestUsageServiceResolvesAPIKeyIDForUsageQueries with plugin catalog identities.
+	db, err := repository.OpenDatabase(config.Config{SQLitePath: filepath.Join(t.TempDir(), "usage-service-plugin-api-key-filter.db")})
+	if err != nil {
+		t.Fatalf("OpenDatabase returned error: %v", err)
+	}
+	closeTestDatabase(t, db)
+	if err := repository.SyncPluginKeyPolicyKeys(db, []repository.PluginKeyPolicyKey{
+		{ID: "team-a", Name: "Team A", Enabled: true},
+		{ID: "team-b", Name: "Team B", Enabled: true},
+	}, time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("SyncPluginKeyPolicyKeys: %v", err)
+	}
+	activeKeys, err := repository.ListActiveCPAAPIKeys(db)
+	if err != nil {
+		t.Fatalf("ListActiveCPAAPIKeys: %v", err)
+	}
+	var targetID string
+	for _, key := range activeKeys {
+		if key.APIKey == "team-a" {
+			targetID = strconv.FormatInt(key.ID, 10)
+		}
+	}
+	if targetID == "" {
+		t.Fatalf("expected plugin target key")
+	}
+	if _, _, err := repository.InsertUsageEvents(db, []entities.UsageEvent{
+		{EventKey: "p1", APIGroupKey: "team-a", Model: "claude-sonnet", Timestamp: time.Date(2026, 4, 16, 9, 0, 0, 0, time.UTC), TotalTokens: 10},
+		{EventKey: "p2", APIGroupKey: "team-a", Model: "claude-opus", Timestamp: time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC), TotalTokens: 20},
+		{EventKey: "p3", APIGroupKey: "team-b", Model: "gpt-4", Timestamp: time.Date(2026, 4, 16, 11, 0, 0, 0, time.UTC), TotalTokens: 300},
+	}); err != nil {
+		t.Fatalf("InsertUsageEvents: %v", err)
+	}
+	if err := repository.AggregateUsageOverviewStats(context.Background(), db, time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("AggregateUsageOverviewStats: %v", err)
+	}
+
+	start := time.Date(2026, 4, 16, 9, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 4, 16, 11, 0, 0, 0, time.UTC)
+	provider := NewUsageService(db, emptyPricingCatalogForTest())
+	overview, err := provider.GetUsageOverview(context.Background(), servicedto.UsageFilter{APIKeyID: targetID, Range: "custom", StartTime: &start, EndTime: &end})
+	if err != nil {
+		t.Fatalf("GetUsageOverview: %v", err)
+	}
+	if overview.Usage == nil || overview.Usage.TotalRequests != 2 || overview.Usage.TotalTokens != 30 {
+		t.Fatalf("expected overview filtered by plugin local id, got %+v", overview.Usage)
+	}
+	analysis, err := provider.GetAnalysis(context.Background(), servicedto.UsageFilter{APIKeyID: targetID, Range: "custom", StartTime: &start, EndTime: &end})
+	if err != nil {
+		t.Fatalf("GetAnalysis: %v", err)
+	}
+	if len(analysis.APIKeyComposition) != 1 || analysis.APIKeyComposition[0].Key != "team-a" || analysis.APIKeyComposition[0].TotalTokens != 30 {
+		t.Fatalf("expected analysis filtered by plugin local id, got %+v", analysis.APIKeyComposition)
+	}
+	events, err := provider.ListUsageEvents(context.Background(), servicedto.UsageFilter{APIKeyID: targetID, Page: 1, PageSize: 100, Limit: 100})
+	if err != nil {
+		t.Fatalf("ListUsageEvents: %v", err)
+	}
+	if events.TotalCount != 2 || len(events.Events) != 2 {
+		t.Fatalf("expected events filtered by plugin local id, got %+v", events)
+	}
+}
+
 func TestUsageServiceRejectsInvalidAPIKeyID(t *testing.T) {
 	db, err := repository.OpenDatabase(config.Config{SQLitePath: filepath.Join(t.TempDir(), "usage-service-invalid-api-key-id.db")})
 	if err != nil {

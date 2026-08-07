@@ -456,13 +456,59 @@ func openLocalRankingDatabase(t *testing.T, name string) *gorm.DB {
 func seedLocalRankingAPIKeys(t *testing.T, db *gorm.DB) []entities.CPAAPIKey {
 	t.Helper()
 	rows := []entities.CPAAPIKey{
-		{APIKey: "sk-local-alpha", DisplayKey: "sk-*********alpha", KeyAlias: "Alpha"},
-		{APIKey: "sk-local-beta", DisplayKey: "sk-**********beta", IsDeleted: true},
+		{APIKey: "sk-local-alpha", DisplayKey: "sk-*********alpha", KeyAlias: "Alpha", Source: entities.CPAAPIKeySourceNative, Enabled: true},
+		{APIKey: "sk-local-beta", DisplayKey: "sk-**********beta", Source: entities.CPAAPIKeySourceNative, Enabled: true, IsDeleted: true},
 	}
 	if err := db.Create(&rows).Error; err != nil {
 		t.Fatalf("seed local ranking API keys: %v", err)
 	}
 	return rows
+}
+
+func TestLocalRankingServiceIncludesPluginKeyPolicyRows(t *testing.T) {
+	location := localRankingLocation(t)
+	now := time.Date(2026, 8, 7, 12, 0, 0, 0, location)
+	db := openLocalRankingDatabase(t, "plugin-ranking.db")
+	rows := []entities.CPAAPIKey{
+		{APIKey: "sk-native", DisplayKey: "sk-*********native", KeyAlias: "Native", Source: entities.CPAAPIKeySourceNative, Enabled: true},
+		{APIKey: "team-a", DisplayKey: "cpa_Ab…xy12", KeyAlias: "Team A", Source: entities.CPAAPIKeySourcePluginKeyPolicy, ExternalID: "team-a", Enabled: true},
+		{APIKey: "team-disabled", DisplayKey: "cpa_xx", KeyAlias: "Disabled", Source: entities.CPAAPIKeySourcePluginKeyPolicy, ExternalID: "team-disabled", Enabled: false},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed keys: %v", err)
+	}
+	insertLocalRankingEvents(t, db, []entities.UsageEvent{
+		{EventKey: "n1", APIGroupKey: "sk-native", Model: "gpt-5", Timestamp: now.Add(-2 * time.Minute), TotalTokens: 100},
+		{EventKey: "p1", APIGroupKey: "team-a", Model: "gpt-5", Timestamp: now.Add(-time.Minute), TotalTokens: 500},
+		{EventKey: "p2", APIGroupKey: "team-disabled", Model: "gpt-5", Timestamp: now.Add(-30 * time.Second), TotalTokens: 200},
+	})
+	service := newLocalRankingService(t, db, func() time.Time { return now })
+	if err := service.AggregateOnce(context.Background()); err != nil {
+		t.Fatalf("aggregate: %v", err)
+	}
+	board := loadLocalBoard(t, service, ranking.LeaderboardToday, ranking.MetricTotalTokens)
+	if len(board.Entries) < 2 {
+		t.Fatalf("expected plugin keys on ranking board, got %+v", board.Entries)
+	}
+	foundPlugin := false
+	foundDisabled := false
+	for _, entry := range board.Entries {
+		if entry.DisplayName == "Team A" {
+			foundPlugin = true
+			if entry.Value != 500 {
+				t.Fatalf("unexpected plugin value: %+v", entry)
+			}
+		}
+		if entry.DisplayName == "Disabled" {
+			foundDisabled = true
+		}
+	}
+	if !foundPlugin {
+		t.Fatalf("plugin key missing from ranking: %+v", board.Entries)
+	}
+	if !foundDisabled {
+		t.Fatalf("disabled plugin key must still rank (enabled is display-only): %+v", board.Entries)
+	}
 }
 
 func insertLocalRankingEvents(t *testing.T, db *gorm.DB, events []entities.UsageEvent) {

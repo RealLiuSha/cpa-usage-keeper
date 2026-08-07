@@ -21,20 +21,24 @@ func (s *SyncService) SyncMetadata(ctx context.Context) error {
 	logrus.Debug("metadata sync started")
 	// 同一轮 metadata 写入与兼容同步补算共用该时间；后台 Runner 使用自己的事务时间。
 	fetchedAt := timeutil.NormalizeStorageTime(s.now())
-	// Auth Files 先读取，但失败不跳过后续两类 metadata。
+	// Auth Files 先读取，但失败不跳过后续 metadata。
 	authFilesResult, authFilesErr := s.metadataFetcher.FetchAuthFiles(ctx)
-	// 管理 API Keys 保持第二个读取位置，失败同样不阻止 provider。
+	// 管理 API Keys 保持第二个读取位置，失败同样不阻止后续来源。
 	apiKeysResult, apiKeysErr := s.metadataFetcher.FetchManagementAPIKeys(ctx)
+	// key-policy catalog：未安装插件时 404/501 走 absent，失败不阻断已提交的 native。
+	keyPolicyResult, keyPolicyErr := s.metadataFetcher.FetchKeyPolicyKeys(ctx)
 	// 七个 provider endpoint 只在纯包内并发，返回按 registry 确定性归并的 snapshot。
 	providerSnapshot, providerFetchErr := providermetadata.Fetch(ctx, s.metadataFetcher)
 	// Auth Files 先进入自己的 repository 事务，保持原有写入顺序。
 	authSyncErr := syncAuthFiles(ctx, s.db, authFilesResult, authFilesErr, fetchedAt)
 	// 管理 API Keys 第二个串行写入，不与 SQLite provider 写入并发。
 	apiKeySyncErr := syncManagementAPIKeys(s.db, apiKeysResult, apiKeysErr, fetchedAt)
+	// plugin catalog 第三个写入；error 路径不碰 plugin 表，absent 才 soft-delete。
+	keyPolicySyncErr := syncKeyPolicyKeys(s.db, keyPolicyResult, keyPolicyErr, fetchedAt)
 	// provider snapshot 最后一次进入 scoped replace 单事务，并分开返回 persistence error 与 fetch warning。
 	providerSyncErr, providerWarningErr := persistProviderMetadata(ctx, s.db, providerSnapshot, providerFetchErr, fetchedAt)
-	// 三类持久化错误按 Auth Files、管理 key、provider 的既有顺序合并。
-	upsertErr := joinErrors(authSyncErr, apiKeySyncErr, providerSyncErr)
+	// 持久化错误按 Auth Files、管理 key、plugin catalog、provider 顺序合并。
+	upsertErr := joinErrors(authSyncErr, apiKeySyncErr, keyPolicySyncErr, providerSyncErr)
 	// aggregateErr 只承接没有 notifier 的兼容同步补算错误。
 	var aggregateErr error
 	// 任一数据库写入失败都阻止基于半成品 identity 发送通知或执行兼容补算。

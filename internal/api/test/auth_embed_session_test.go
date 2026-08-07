@@ -782,7 +782,7 @@ func (inactiveCPAAPIKeyProvider) ListCPAAPIKeys(context.Context) ([]entities.CPA
 	return nil, nil
 }
 
-func (inactiveCPAAPIKeyProvider) FindActiveCPAAPIKeyByValue(context.Context, string) (entities.CPAAPIKey, error) {
+func (inactiveCPAAPIKeyProvider) FindActiveNativeCPAAPIKeyByValue(context.Context, string) (entities.CPAAPIKey, error) {
 	return entities.CPAAPIKey{}, errors.New("not found")
 }
 

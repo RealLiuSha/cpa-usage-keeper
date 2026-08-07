@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { IconEye, IconEyeOff } from '@/components/ui/icons';
 import { useScrollBoundaryContainment } from '@/hooks/useScrollBoundaryContainment';
-import type { CpaApiKeySettingsItem } from '@/lib/types';
+import type { CpaApiKeySettingsItem, CpaApiKeySource } from '@/lib/types';
 import styles from '@/pages/UsagePage.module.scss';
 
 type ClipboardWriter = Pick<Clipboard, 'writeText'>;
@@ -37,7 +37,17 @@ type CopyContext = {
   document?: CopyDocument;
 };
 
+export const CPA_API_KEY_SOURCE_PLUGIN_KEY_POLICY = 'plugin:cpa-key-policy';
+
+export function isPluginKeyPolicySource(source?: CpaApiKeySource | null): boolean {
+  return source === CPA_API_KEY_SOURCE_PLUGIN_KEY_POLICY;
+}
+
 export function getApiKeySettingsVisibleKey(item: CpaApiKeySettingsItem, showFullApiKeys: boolean) {
+  // Plugin rows store a logical id, not a secret — never treat show-full as secret reveal.
+  if (isPluginKeyPolicySource(item.source)) {
+    return item.displayKey || item.apiKey;
+  }
   return showFullApiKeys && item.apiKey ? item.apiKey : item.displayKey;
 }
 
@@ -115,6 +125,9 @@ export function ApiKeySettingsCard({ apiKeys, loading = false, savingId = null, 
   }, []);
 
   const handleCopyApiKey = useCallback(async (item: CpaApiKeySettingsItem) => {
+    if (isPluginKeyPolicySource(item.source)) {
+      return;
+    }
     try {
       await copyApiKeyToClipboard(item.apiKey);
       setCopiedId(item.id);
@@ -162,13 +175,30 @@ export function ApiKeySettingsCard({ apiKeys, loading = false, savingId = null, 
             {apiKeys.map((item) => {
               const draftAlias = draftAliases[item.id] ?? '';
               const disabled = savingId === item.id;
+              const plugin = isPluginKeyPolicySource(item.source);
               const apiKey = getApiKeySettingsVisibleKey(item, showFullApiKeys);
               const copyLabel = copiedId === item.id ? t('usage_stats.api_key_settings_copied') : t('usage_stats.api_key_settings_copy');
+              const fieldLabel = plugin
+                ? t('usage_stats.api_key_settings_logical_id')
+                : t('usage_stats.api_key_settings_display_key');
+              const sourceLabel = plugin
+                ? t('usage_stats.api_key_source_key_policy')
+                : t('usage_stats.api_key_source_native');
+              const isDisabledPlugin = plugin && item.enabled === false;
               return (
-                <div key={item.id} className={styles.apiKeySettingsItem}>
+                <div
+                  key={item.id}
+                  className={`${styles.apiKeySettingsItem}${isDisabledPlugin ? ` ${styles.apiKeySettingsItemDisabled}` : ''}`.trim()}
+                >
                   <div className={styles.apiKeySettingsSummary}>
-                    <span className={styles.apiKeyFieldLabel}>{t('usage_stats.api_key_settings_display_key')}</span>
+                    <span className={styles.apiKeyFieldLabel}>{fieldLabel}</span>
                     <span className={styles.apiKeySettingsName} title={apiKey}>{apiKey}</span>
+                    <span className={styles.apiKeySourceBadge} data-source={plugin ? 'plugin' : 'native'}>
+                      {sourceLabel}
+                    </span>
+                    {isDisabledPlugin ? (
+                      <span className={styles.apiKeyDisabledBadge}>{t('usage_stats.api_key_enabled_false')}</span>
+                    ) : null}
                   </div>
                   <div className={styles.apiKeySettingsForm}>
                     <label className={styles.apiKeyAliasField}>
@@ -183,16 +213,18 @@ export function ApiKeySettingsCard({ apiKeys, loading = false, savingId = null, 
                       />
                     </label>
                     <div className={styles.apiKeySettingsActions}>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        appearance="action"
-                        className={styles.apiKeySettingsCopyButton}
-                        onClick={() => void handleCopyApiKey(item)}
-                        disabled={!item.apiKey}
-                      >
-                        {copyLabel}
-                      </Button>
+                      {!plugin ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          appearance="action"
+                          className={styles.apiKeySettingsCopyButton}
+                          onClick={() => void handleCopyApiKey(item)}
+                          disabled={!item.apiKey}
+                        >
+                          {copyLabel}
+                        </Button>
+                      ) : null}
                       <Button
                         variant="primary"
                         size="sm"

@@ -278,7 +278,7 @@ func (p *countingCPAAPIKeyProvider) ListCPAAPIKeys(context.Context) ([]entities.
 	return nil, nil
 }
 
-func (p *countingCPAAPIKeyProvider) FindActiveCPAAPIKeyByValue(context.Context, string) (entities.CPAAPIKey, error) {
+func (p *countingCPAAPIKeyProvider) FindActiveNativeCPAAPIKeyByValue(context.Context, string) (entities.CPAAPIKey, error) {
 	p.findCalls++
 	return entities.CPAAPIKey{}, p.findErr
 }

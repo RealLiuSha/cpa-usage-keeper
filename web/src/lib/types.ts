@@ -650,11 +650,15 @@ export interface AnalysisResponse {
   model_efficiency: AnalysisModelEfficiencyItem[]
 }
 
+export type CpaApiKeySource = 'native' | 'plugin:cpa-key-policy'
+
 export interface CpaApiKeyDisplayItem {
   id: string
   keyAlias: string
   displayKey: string
   label: string
+  source?: CpaApiKeySource
+  enabled?: boolean
   lastSyncedAt: string | null
 }
 
@@ -665,6 +669,8 @@ export interface CpaApiKeySettingsItem extends CpaApiKeyDisplayItem {
 export interface CpaApiKeyOption {
   id: string
   label: string
+  source?: CpaApiKeySource
+  enabled?: boolean
 }
 
 export interface CpaApiKeysResponse {

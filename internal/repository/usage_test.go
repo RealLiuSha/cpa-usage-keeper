@@ -274,8 +274,8 @@ func TestBuildAnalysisWithFilterExcludesMissingAndDeletedCPAAPIKeys(t *testing.T
 	bucket := time.Date(2026, 4, 20, 9, 0, 0, 0, time.UTC)
 	deletedAt := bucket.Add(time.Hour)
 	if err := db.Create([]entities.CPAAPIKey{
-		{APIKey: "sk-active-key", DisplayKey: "sk-*********active"},
-		{APIKey: "sk-deleted-key", DisplayKey: "sk-*********deleted", IsDeleted: true, LastSyncedAt: &deletedAt},
+		{APIKey: "sk-active-key", DisplayKey: "sk-*********active", Source: entities.CPAAPIKeySourceNative, Enabled: true},
+		{APIKey: "sk-deleted-key", DisplayKey: "sk-*********deleted", Source: entities.CPAAPIKeySourceNative, Enabled: true, IsDeleted: true, LastSyncedAt: &deletedAt},
 	}).Error; err != nil {
 		t.Fatalf("insert CPA API keys: %v", err)
 	}
@@ -304,6 +304,59 @@ func TestBuildAnalysisWithFilterExcludesMissingAndDeletedCPAAPIKeys(t *testing.T
 	}
 	if len(analysis.TokenUsage) != 1 || analysis.TokenUsage[0].TotalTokens != 30 || analysis.TokenUsage[0].Requests != 2 {
 		t.Fatalf("expected token usage from active CPA API key only, got %+v", analysis.TokenUsage)
+	}
+}
+
+// Plugin identity rows (including enabled=false) must appear; soft-deleted plugin rows must not.
+func TestBuildAnalysisWithFilterIncludesPluginKeyPolicyIDs(t *testing.T) {
+	db := openUsageTestDatabase(t)
+	bucket := time.Date(2026, 8, 7, 9, 0, 0, 0, time.UTC)
+	deletedAt := bucket.Add(time.Hour)
+	if err := db.Create([]entities.CPAAPIKey{
+		{APIKey: "sk-native", DisplayKey: "sk-*********native", Source: entities.CPAAPIKeySourceNative, Enabled: true},
+		{APIKey: "team-a", DisplayKey: "cpa_Ab…xy12", KeyAlias: "Team A", Source: entities.CPAAPIKeySourcePluginKeyPolicy, ExternalID: "team-a", Enabled: true},
+		{APIKey: "team-disabled", DisplayKey: "cpa_Dis…able", KeyAlias: "Disabled Team", Source: entities.CPAAPIKeySourcePluginKeyPolicy, ExternalID: "team-disabled", Enabled: false},
+		{APIKey: "team-deleted", DisplayKey: "cpa_Del…eted", KeyAlias: "Deleted Team", Source: entities.CPAAPIKeySourcePluginKeyPolicy, ExternalID: "team-deleted", Enabled: true, IsDeleted: true, LastSyncedAt: &deletedAt},
+	}).Error; err != nil {
+		t.Fatalf("insert CPA API keys: %v", err)
+	}
+	if err := db.Create([]entities.UsageOverviewHourlyStat{
+		{BucketStart: bucket, APIGroupKey: "sk-native", Model: "claude-sonnet", RequestCount: 1, InputTokens: 5, OutputTokens: 5, TotalTokens: 10},
+		{BucketStart: bucket, APIGroupKey: "team-a", Model: "claude-sonnet", RequestCount: 2, InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
+		{BucketStart: bucket, APIGroupKey: "team-disabled", Model: "claude-opus", RequestCount: 3, InputTokens: 15, OutputTokens: 15, TotalTokens: 40},
+		{BucketStart: bucket, APIGroupKey: "team-deleted", Model: "gpt-4", RequestCount: 4, InputTokens: 20, OutputTokens: 20, TotalTokens: 50},
+	}).Error; err != nil {
+		t.Fatalf("insert hourly stats: %v", err)
+	}
+	start := bucket
+	end := bucket.Add(time.Hour)
+
+	analysis, err := BuildAnalysisWithFilter(db, repodto.UsageQueryFilter{StartTime: &start, EndTime: &end}, pricingResolverFromDBForTest(t, db))
+	if err != nil {
+		t.Fatalf("BuildAnalysisWithFilter: %v", err)
+	}
+	keys := map[string]int64{}
+	for _, row := range analysis.APIKeyComposition {
+		keys[row.Key] = row.TotalTokens
+	}
+	if keys["team-a"] != 30 {
+		t.Fatalf("plugin enabled key missing: %+v", analysis.APIKeyComposition)
+	}
+	if keys["team-disabled"] != 40 {
+		t.Fatalf("plugin disabled key must still appear (enabled is display-only): %+v", analysis.APIKeyComposition)
+	}
+	if _, ok := keys["team-deleted"]; ok {
+		t.Fatalf("soft-deleted plugin must be excluded: %+v", analysis.APIKeyComposition)
+	}
+	if keys["sk-native"] != 10 {
+		t.Fatalf("native key missing: %+v", analysis.APIKeyComposition)
+	}
+	heatmapKeys := map[string]struct{}{}
+	for _, cell := range analysis.Heatmap {
+		heatmapKeys[cell.APIKey] = struct{}{}
+	}
+	if _, ok := heatmapKeys["team-a"]; !ok {
+		t.Fatalf("heatmap must include plugin key: %+v", analysis.Heatmap)
 	}
 }
 

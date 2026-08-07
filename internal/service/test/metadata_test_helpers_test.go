@@ -2,6 +2,7 @@ package test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -36,6 +37,10 @@ type metadataTestFetcher struct {
 	managementAPIKeysResult *response.ManagementAPIKeysResult
 	// managementAPIKeysErr 注入管理 API Keys fetch failure。
 	managementAPIKeysErr error
+	// keyPolicyKeysResult 保存 key-policy catalog 响应。
+	keyPolicyKeysResult *response.KeyPolicyKeysResult
+	// keyPolicyKeysErr 注入 key-policy catalog fetch failure（含 404/501 absent）。
+	keyPolicyKeysErr error
 	// standardResults 按 source 保存六类标准 API Key endpoint 响应。
 	standardResults map[string]*response.ProviderKeyConfigResult
 	// standardErrors 按 source 注入独立 fetch error。
@@ -60,6 +65,9 @@ func newMetadataTestFetcher() *metadataTestFetcher {
 		authFilesResult: &response.AuthFilesResult{StatusCode: 200, Payload: authfiles.AuthFilesResponse{Files: []authfiles.AuthFile{}}},
 		// 管理 API Keys 的 200 空列表会正常替换本地 key 状态。
 		managementAPIKeysResult: &response.ManagementAPIKeysResult{StatusCode: 200, Payload: cpaapikeys.ManagementAPIKeysResponse{APIKeys: []string{}}},
+		// 默认模拟未装插件：404 absent，既有 metadata 测试不依赖插件 catalog。
+		keyPolicyKeysResult: &response.KeyPolicyKeysResult{StatusCode: 404},
+		keyPolicyKeysErr:    fmt.Errorf("key-policy keys: unexpected status 404"),
 		// standardResults 为六个标准 provider source 预留独立结果。
 		standardResults: make(map[string]*response.ProviderKeyConfigResult),
 		// standardErrors 默认没有来源失败。
@@ -122,6 +130,12 @@ func (f *metadataTestFetcher) FetchManagementAPIKeys(context.Context) (*response
 	f.recordCall("management-api-keys")
 	// 返回预设结果与错误。
 	return f.managementAPIKeysResult, f.managementAPIKeysErr
+}
+
+// FetchKeyPolicyKeys 返回测试配置的 key-policy catalog 结果（默认 404 absent）。
+func (f *metadataTestFetcher) FetchKeyPolicyKeys(context.Context) (*response.KeyPolicyKeysResult, error) {
+	f.recordCall("key-policy-keys")
+	return f.keyPolicyKeysResult, f.keyPolicyKeysErr
 }
 
 // fetchStandardProvider 复用六类标准 API Key endpoint 的测试分派逻辑。

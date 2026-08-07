@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -252,6 +253,125 @@ func TestFetchManagementAPIKeysAllowsEmptyArray(t *testing.T) {
 	}
 	if result.Payload.APIKeys == nil || len(result.Payload.APIKeys) != 0 {
 		t.Fatalf("expected empty API key list, got %#v", result.Payload.APIKeys)
+	}
+}
+
+func TestFetchKeyPolicyKeysSendsBearerTokenAndParsesWhitelistFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != cpaManagementKeyPolicyKeysEndpoint {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer management-secret" {
+			t.Fatalf("expected management Authorization header, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// Include secret fields that must be ignored by the DTO whitelist.
+		_, _ = w.Write([]byte(`{"keys":[{"id":"team-a","name":"Team A","enabled":true,"key_preview":"cpa_Ab…xy12","plain_key":"cpa_SECRET","key_hash":"deadbeef","models":[{"id":"gpt"}]}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "management-secret", 2*time.Second, false)
+	result, err := client.FetchKeyPolicyKeys(context.Background())
+	if err != nil {
+		t.Fatalf("FetchKeyPolicyKeys returned error: %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", result.StatusCode)
+	}
+	if len(result.Payload.Keys) != 1 {
+		t.Fatalf("unexpected keys: %#v", result.Payload.Keys)
+	}
+	key := result.Payload.Keys[0]
+	if key.ID != "team-a" || key.Name != "Team A" || !key.EffectiveEnabled() || key.KeyPreview != "cpa_Ab…xy12" {
+		t.Fatalf("unexpected key payload: %+v", key)
+	}
+	// Body may still contain secrets from upstream; DTO must not surface them as fields.
+	if strings.Contains(fmt.Sprintf("%#v", key), "cpa_SECRET") || strings.Contains(fmt.Sprintf("%#v", key), "deadbeef") {
+		t.Fatalf("DTO must not retain plain_key/key_hash: %#v", key)
+	}
+}
+
+func TestFetchKeyPolicyKeysAllowsEmptyKeys(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"keys":[]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "management-secret", 2*time.Second, false)
+	result, err := client.FetchKeyPolicyKeys(context.Background())
+	if err != nil {
+		t.Fatalf("FetchKeyPolicyKeys returned error: %v", err)
+	}
+	if result.Payload.Keys == nil || len(result.Payload.Keys) != 0 {
+		t.Fatalf("expected empty keys list, got %#v", result.Payload.Keys)
+	}
+}
+
+func TestFetchKeyPolicyKeysReportsAbsentStatuses(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusNotImplemented} {
+		status := status
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "missing", status)
+			}))
+			defer server.Close()
+
+			client := NewClient(server.URL, "management-secret", 2*time.Second, false)
+			result, err := client.FetchKeyPolicyKeys(context.Background())
+			if err == nil {
+				t.Fatalf("expected error for status %d", status)
+			}
+			if result == nil || result.StatusCode != status {
+				t.Fatalf("expected status %d on result, got %+v", status, result)
+			}
+		})
+	}
+}
+
+func TestFetchKeyPolicyKeysReportsServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "management-secret", 2*time.Second, false)
+	result, err := client.FetchKeyPolicyKeys(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "status 500") {
+		t.Fatalf("expected 500 error, got %v", err)
+	}
+	if result == nil || result.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected status 500 on result, got %+v", result)
+	}
+}
+
+func TestFetchKeyPolicyKeysRejectsInvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{bad-json}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "management-secret", 2*time.Second, false)
+	_, err := client.FetchKeyPolicyKeys(context.Background())
+	if err == nil {
+		t.Fatalf("expected invalid JSON error")
+	}
+}
+
+func TestFetchKeyPolicyKeysDefaultsEnabledWhenOmitted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"keys":[{"id":"team-b","name":"Team B","key_preview":"cpa_xx"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "management-secret", 2*time.Second, false)
+	result, err := client.FetchKeyPolicyKeys(context.Background())
+	if err != nil {
+		t.Fatalf("FetchKeyPolicyKeys returned error: %v", err)
+	}
+	if len(result.Payload.Keys) != 1 || !result.Payload.Keys[0].EffectiveEnabled() {
+		t.Fatalf("expected enabled default true, got %#v", result.Payload.Keys)
 	}
 }
 

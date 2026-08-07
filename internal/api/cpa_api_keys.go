@@ -23,6 +23,8 @@ type cpaAPIKeyResponse struct {
 	KeyAlias     string  `json:"keyAlias"`
 	DisplayKey   string  `json:"displayKey"`
 	Label        string  `json:"label"`
+	Source       string  `json:"source"`
+	Enabled      bool    `json:"enabled"`
 	LastSyncedAt *string `json:"lastSyncedAt"`
 }
 
@@ -36,6 +38,8 @@ type cpaAPIKeySettingsResponse struct {
 	KeyAlias     string  `json:"keyAlias"`
 	DisplayKey   string  `json:"displayKey"`
 	Label        string  `json:"label"`
+	Source       string  `json:"source"`
+	Enabled      bool    `json:"enabled"`
 	LastSyncedAt *string `json:"lastSyncedAt"`
 }
 
@@ -44,8 +48,10 @@ type cpaAPIKeySettingsListResponse struct {
 }
 
 type cpaAPIKeyOption struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Source  string `json:"source"`
+	Enabled bool   `json:"enabled"`
 }
 
 type cpaAPIKeyOptionsResponse struct {
@@ -178,6 +184,8 @@ func toCPAAPIKeyResponse(row entities.CPAAPIKey) cpaAPIKeyResponse {
 		KeyAlias:     row.KeyAlias,
 		DisplayKey:   helper.CPAAPIKeyMaskedDisplayKey(row),
 		Label:        label,
+		Source:       cpaAPIKeySourceForResponse(row),
+		Enabled:      cpaAPIKeyEnabledForResponse(row),
 		LastSyncedAt: lastSyncedAt,
 	}
 }
@@ -195,6 +203,8 @@ func toCPAAPIKeySettingsResponse(row entities.CPAAPIKey) cpaAPIKeySettingsRespon
 		KeyAlias:     row.KeyAlias,
 		DisplayKey:   helper.CPAAPIKeyMaskedDisplayKey(row),
 		Label:        label,
+		Source:       cpaAPIKeySourceForResponse(row),
+		Enabled:      cpaAPIKeyEnabledForResponse(row),
 		LastSyncedAt: lastSyncedAt,
 	}
 }
@@ -202,9 +212,27 @@ func toCPAAPIKeySettingsResponse(row entities.CPAAPIKey) cpaAPIKeySettingsRespon
 func toCPAAPIKeyOption(row entities.CPAAPIKey) cpaAPIKeyOption {
 	label := helper.CPAAPIKeyDisplayName(row)
 	return cpaAPIKeyOption{
-		ID:    strconv.FormatInt(row.ID, 10),
-		Label: label,
+		ID:      strconv.FormatInt(row.ID, 10),
+		Label:   label,
+		Source:  cpaAPIKeySourceForResponse(row),
+		Enabled: cpaAPIKeyEnabledForResponse(row),
 	}
+}
+
+// cpaAPIKeySourceForResponse normalizes empty historical source to native for API consumers.
+func cpaAPIKeySourceForResponse(row entities.CPAAPIKey) string {
+	if entities.IsPluginKeyPolicySource(row.Source) {
+		return entities.CPAAPIKeySourcePluginKeyPolicy
+	}
+	return entities.CPAAPIKeySourceNative
+}
+
+func cpaAPIKeyEnabledForResponse(row entities.CPAAPIKey) bool {
+	if entities.IsPluginKeyPolicySource(row.Source) {
+		return row.Enabled
+	}
+	// Native rows are always treated as enabled for display.
+	return true
 }
 
 func validateCPAAPIKeyAlias(value string) error {

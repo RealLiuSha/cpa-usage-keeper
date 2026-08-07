@@ -16,7 +16,8 @@ var ErrInvalidID = errors.New("invalid id")
 
 type CPAAPIKeyProvider interface {
 	ListCPAAPIKeys(ctx context.Context) ([]entities.CPAAPIKey, error)
-	FindActiveCPAAPIKeyByValue(ctx context.Context, apiKey string) (entities.CPAAPIKey, error)
+	// FindActiveNativeCPAAPIKeyByValue is Key Viewer login credential lookup only (native/empty source).
+	FindActiveNativeCPAAPIKeyByValue(ctx context.Context, apiKey string) (entities.CPAAPIKey, error)
 	FindActiveCPAAPIKeyByID(ctx context.Context, id int64) (entities.CPAAPIKey, error)
 	UpdateCPAAPIKeyAlias(ctx context.Context, id int64, keyAlias string) (entities.CPAAPIKey, error)
 }
@@ -33,12 +34,12 @@ func (s *cpaAPIKeyService) ListCPAAPIKeys(context.Context) ([]entities.CPAAPIKey
 	return repository.ListActiveCPAAPIKeys(s.db)
 }
 
-func (s *cpaAPIKeyService) FindActiveCPAAPIKeyByValue(_ context.Context, apiKey string) (entities.CPAAPIKey, error) {
+func (s *cpaAPIKeyService) FindActiveNativeCPAAPIKeyByValue(_ context.Context, apiKey string) (entities.CPAAPIKey, error) {
 	trimmed := strings.TrimSpace(apiKey)
 	if trimmed == "" {
 		return entities.CPAAPIKey{}, gorm.ErrRecordNotFound
 	}
-	return repository.FindActiveCPAAPIKeyByValue(s.db, trimmed)
+	return repository.FindActiveNativeCPAAPIKeyByValue(s.db, trimmed)
 }
 
 func (s *cpaAPIKeyService) FindActiveCPAAPIKeyByID(_ context.Context, id int64) (entities.CPAAPIKey, error) {

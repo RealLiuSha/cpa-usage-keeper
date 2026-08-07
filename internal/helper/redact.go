@@ -21,18 +21,40 @@ func RedactSensitiveValue(value string) string {
 	return string(runes[:3]) + sensitiveValueMask + string(runes[len(runes)-6:])
 }
 
-// CPAAPIKeyMaskedDisplayKey 返回 CPA API Key 的安全展示 key；优先基于原始 key 重新脱敏，避免历史 DisplayKey 格式不一致。
+// CPAAPIKeyMaskedDisplayKey 返回 CPA API Key 的安全展示 key。
+// native：优先基于原始 secret 重新脱敏，避免历史 DisplayKey 格式不一致。
+// plugin：api_key 是逻辑 id，不得走 secret 脱敏（短 id 会变成 *********）。
 func CPAAPIKeyMaskedDisplayKey(row entities.CPAAPIKey) string {
+	if entities.IsPluginKeyPolicySource(row.Source) {
+		if preview := strings.TrimSpace(row.DisplayKey); preview != "" {
+			return preview
+		}
+		if externalID := strings.TrimSpace(row.ExternalID); externalID != "" {
+			return externalID
+		}
+		if apiKey := strings.TrimSpace(row.APIKey); apiKey != "" {
+			return apiKey
+		}
+		return "unknown"
+	}
 	if strings.TrimSpace(row.APIKey) != "" {
 		return RedactSensitiveValue(row.APIKey)
 	}
 	return strings.TrimSpace(row.DisplayKey)
 }
 
-// CPAAPIKeyDisplayName 返回 CPA API Key 的前端展示名：优先别名，其次使用统一脱敏 key。
+// CPAAPIKeyDisplayName 返回 CPA API Key 的前端展示名：优先别名，其次按 source 分支的展示 key。
 func CPAAPIKeyDisplayName(row entities.CPAAPIKey) string {
 	if strings.TrimSpace(row.KeyAlias) != "" {
 		return strings.TrimSpace(row.KeyAlias)
+	}
+	if entities.IsPluginKeyPolicySource(row.Source) {
+		if externalID := strings.TrimSpace(row.ExternalID); externalID != "" {
+			return externalID
+		}
+		if apiKey := strings.TrimSpace(row.APIKey); apiKey != "" {
+			return apiKey
+		}
 	}
 	return CPAAPIKeyMaskedDisplayKey(row)
 }

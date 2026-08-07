@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestFindActiveCPAAPIKeyByValueTrimsInputAndQueriesActiveRow(t *testing.T) {
+func TestFindActiveNativeCPAAPIKeyByValueTrimsInputAndQueriesActiveRow(t *testing.T) {
 	db, err := repository.OpenDatabase(config.Config{SQLitePath: filepath.Join(t.TempDir(), "api-keys-service.db")})
 	if err != nil {
 		t.Fatalf("OpenDatabase returned error: %v", err)
@@ -29,16 +29,16 @@ func TestFindActiveCPAAPIKeyByValueTrimsInputAndQueriesActiveRow(t *testing.T) {
 	}
 	provider := NewCPAAPIKeyService(db)
 
-	row, err := provider.FindActiveCPAAPIKeyByValue(context.Background(), "  sk-beta123456  ")
+	row, err := provider.FindActiveNativeCPAAPIKeyByValue(context.Background(), "  sk-beta123456  ")
 	if err != nil {
-		t.Fatalf("FindActiveCPAAPIKeyByValue returned error: %v", err)
+		t.Fatalf("FindActiveNativeCPAAPIKeyByValue returned error: %v", err)
 	}
 	if row.ID != 2 || row.DisplayKey == "" || row.APIKey != "sk-beta123456" {
 		t.Fatalf("unexpected matched row: %+v", row)
 	}
 }
 
-func TestFindActiveCPAAPIKeyByValueRejectsEmptyAndMissingAsNotFound(t *testing.T) {
+func TestFindActiveNativeCPAAPIKeyByValueRejectsEmptyAndMissingAsNotFound(t *testing.T) {
 	db, err := repository.OpenDatabase(config.Config{SQLitePath: filepath.Join(t.TempDir(), "api-keys-service.db")})
 	if err != nil {
 		t.Fatalf("OpenDatabase returned error: %v", err)
@@ -55,7 +55,7 @@ func TestFindActiveCPAAPIKeyByValueRejectsEmptyAndMissingAsNotFound(t *testing.T
 	provider := NewCPAAPIKeyService(db)
 
 	for _, apiKey := range []string{"   ", "sk-missing"} {
-		if _, err := provider.FindActiveCPAAPIKeyByValue(context.Background(), apiKey); !errors.Is(err, gorm.ErrRecordNotFound) {
+		if _, err := provider.FindActiveNativeCPAAPIKeyByValue(context.Background(), apiKey); !errors.Is(err, gorm.ErrRecordNotFound) {
 			t.Fatalf("expected ErrRecordNotFound for %q, got %v", apiKey, err)
 		}
 	}

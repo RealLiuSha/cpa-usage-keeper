@@ -148,6 +148,19 @@ describe('i18n resources', () => {
     expect(i18n.getResource('zh-TW', 'translation', 'usage_stats.session_settings_source_embed')).toBe('CPAMC 嵌入');
   });
 
+  it('keeps API key source and plugin labels available in every language', () => {
+    expect(i18n.getResource('en', 'translation', 'usage_stats.api_key_source_native')).toBe('Native');
+    expect(i18n.getResource('en', 'translation', 'usage_stats.api_key_source_key_policy')).toBe('Key Policy');
+    expect(i18n.getResource('en', 'translation', 'usage_stats.api_key_enabled_false')).toBe('Disabled');
+    expect(i18n.getResource('en', 'translation', 'usage_stats.api_key_settings_logical_id')).toBe('Logical ID');
+    expect(i18n.getResource('zh', 'translation', 'usage_stats.api_key_source_native')).toBe('原生');
+    expect(i18n.getResource('zh', 'translation', 'usage_stats.api_key_source_key_policy')).toBe('Key Policy');
+    expect(i18n.getResource('zh', 'translation', 'usage_stats.api_key_enabled_false')).toBe('已停用');
+    expect(i18n.getResource('zh', 'translation', 'usage_stats.api_key_settings_logical_id')).toBe('逻辑 ID');
+    expect(i18n.getResource('zh-TW', 'translation', 'usage_stats.api_key_source_native')).toBe('原生');
+    expect(i18n.getResource('zh-TW', 'translation', 'usage_stats.api_key_settings_logical_id')).toBe('邏輯 ID');
+  });
+
   it('keeps credential health chart labels available in every language', () => {
     expect(i18n.getResource('en', 'translation', 'usage_stats.credentials_health_last_5h')).toBe('Last 5h');
     expect(i18n.getResource('en', 'translation', 'usage_stats.credentials_health_ok')).toBe('OK');

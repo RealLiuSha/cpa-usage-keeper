@@ -30,7 +30,7 @@ func (s usageAnalysisAPIKeyStub) ListCPAAPIKeys(context.Context) ([]entities.CPA
 	return s.rows, s.err
 }
 
-func (s usageAnalysisAPIKeyStub) FindActiveCPAAPIKeyByValue(context.Context, string) (entities.CPAAPIKey, error) {
+func (s usageAnalysisAPIKeyStub) FindActiveNativeCPAAPIKeyByValue(context.Context, string) (entities.CPAAPIKey, error) {
 	return entities.CPAAPIKey{}, service.ErrInvalidID
 }
 

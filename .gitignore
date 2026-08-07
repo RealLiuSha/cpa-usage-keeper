@@ -47,3 +47,11 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+# docs
+goals
+plans
+memories
+
+# other
+deploy/scripts/

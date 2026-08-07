@@ -55,3 +55,39 @@ func TestCPAAPIKeyMaskedDisplayKeyFallsBackToStoredDisplayKeyWhenRawKeyIsMissing
 		t.Fatalf("expected stored display key fallback, got %q", got)
 	}
 }
+
+func TestCPAAPIKeyDisplayNameForPluginDoesNotRedactShortID(t *testing.T) {
+	row := entities.CPAAPIKey{
+		APIKey:     "team-a",
+		Source:     entities.CPAAPIKeySourcePluginKeyPolicy,
+		ExternalID: "team-a",
+		DisplayKey: "cpa_Ab…xy12",
+	}
+	if got := CPAAPIKeyDisplayName(row); got != "team-a" {
+		t.Fatalf("expected plugin id label without redact, got %q", got)
+	}
+	row.KeyAlias = "Team A"
+	if got := CPAAPIKeyDisplayName(row); got != "Team A" {
+		t.Fatalf("expected alias, got %q", got)
+	}
+}
+
+func TestCPAAPIKeyMaskedDisplayKeyForPluginUsesPreviewOrID(t *testing.T) {
+	row := entities.CPAAPIKey{
+		APIKey:     "LiuSha",
+		Source:     entities.CPAAPIKeySourcePluginKeyPolicy,
+		ExternalID: "LiuSha",
+		DisplayKey: "cpa_Ab…xy12",
+	}
+	if got := CPAAPIKeyMaskedDisplayKey(row); got != "cpa_Ab…xy12" {
+		t.Fatalf("expected key_preview display, got %q", got)
+	}
+	row.DisplayKey = ""
+	if got := CPAAPIKeyMaskedDisplayKey(row); got != "LiuSha" {
+		t.Fatalf("expected logical id fallback without *********, got %q", got)
+	}
+	// Contrast: native short values still fully mask.
+	if got := CPAAPIKeyMaskedDisplayKey(entities.CPAAPIKey{APIKey: "shortkey1", Source: entities.CPAAPIKeySourceNative}); got != "*********" {
+		t.Fatalf("expected native short secret mask, got %q", got)
+	}
+}
