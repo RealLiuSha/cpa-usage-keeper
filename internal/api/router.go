@@ -284,7 +284,21 @@ func renderIndexHTML(staticFS fs.FS, basePath string, sharePublicEnabled bool) (
 		enabledToken = `"true"`
 	}
 	indexHTML = bytes.ReplaceAll(indexHTML, []byte(appSharePublicBoolPlaceholder), []byte(enabledToken))
+	// Vite builds with base "./", so asset URLs are relative (./assets/...).
+	// Deep SPA routes like /keeper/share/overview would resolve those to
+	// /keeper/share/assets/* and hit the HTML fallback instead of real JS/CSS.
+	// Rewrite to an absolute path under APP_BASE_PATH before serving.
+	indexHTML = bytes.ReplaceAll(indexHTML, []byte("./assets/"), []byte(absoluteAssetPrefix(basePath)))
 	return indexHTML, nil
+}
+
+// absoluteAssetPrefix returns the browser path prefix for hashed frontend assets.
+// basePath is already normalized (empty or "/keeper"-style, no trailing slash).
+func absoluteAssetPrefix(basePath string) string {
+	if basePath == "" || basePath == "/" {
+		return "/assets/"
+	}
+	return strings.TrimRight(basePath, "/") + "/assets/"
 }
 
 func cleanURLPath(requestPath string) string {

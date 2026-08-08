@@ -547,6 +547,83 @@ func TestStaticAssetResponsesUseLongCache(t *testing.T) {
 	}
 }
 
+func TestRenderIndexHTMLRewritesRelativeAssetsUnderBasePath(t *testing.T) {
+	staticFS := testStaticFS(t, map[string]string{
+		"index.html": `<html><head>
+<script>window.__APP_BASE_PATH__ = "__APP_BASE_PATH__";window.__SHARE_PUBLIC_FLAG__ = "__SHARE_PUBLIC_BOOL__";</script>
+<link rel="stylesheet" href="./assets/index-abc.css">
+</head><body>
+<div id="root"></div>
+<script type="module" src="./assets/index-abc.js"></script>
+</body></html>`,
+		"assets/index-abc.js":  "console.log('ok')",
+		"assets/index-abc.css": "body{}",
+	})
+
+	router := NewRouter(staticFS, nil, nil, nil, AuthConfig{BasePath: "/keeper"}, nil, "/keeper", OptionalProviders{
+		SharePublicEnabled: true,
+	})
+
+	// Deep share route must still emit absolute asset URLs under APP_BASE_PATH.
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/keeper/share/overview", nil)
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !contains(body, `src="/keeper/assets/index-abc.js"`) {
+		t.Fatalf("expected absolute JS asset under base path, got %s", body)
+	}
+	if !contains(body, `href="/keeper/assets/index-abc.css"`) {
+		t.Fatalf("expected absolute CSS asset under base path, got %s", body)
+	}
+	if contains(body, `./assets/`) {
+		t.Fatalf("expected relative asset prefix to be rewritten, got %s", body)
+	}
+	if !contains(body, `window.__APP_BASE_PATH__ = "/keeper";`) {
+		t.Fatalf("expected injected base path, got %s", body)
+	}
+
+	// Absolute asset route still serves real JS, not SPA HTML.
+	assetResp := httptest.NewRecorder()
+	assetReq := httptest.NewRequest(http.MethodGet, "/keeper/assets/index-abc.js", nil)
+	router.ServeHTTP(assetResp, assetReq)
+	if assetResp.Code != http.StatusOK || assetResp.Body.String() != "console.log('ok')" {
+		t.Fatalf("expected real JS asset body, got code=%d body=%q", assetResp.Code, assetResp.Body.String())
+	}
+}
+
+func TestRenderIndexHTMLRewritesRelativeAssetsAtRoot(t *testing.T) {
+	staticFS := testStaticFS(t, map[string]string{
+		"index.html": `<html><body><script type="module" src="./assets/app.js"></script></body></html>`,
+	})
+
+	html, err := renderIndexHTML(staticFS, "", false)
+	if err != nil {
+		t.Fatalf("renderIndexHTML: %v", err)
+	}
+	if got := string(html); !contains(got, `src="/assets/app.js"`) {
+		t.Fatalf("expected root absolute asset path, got %s", got)
+	}
+}
+
+func TestAbsoluteAssetPrefix(t *testing.T) {
+	for _, tc := range []struct {
+		base string
+		want string
+	}{
+		{base: "", want: "/assets/"},
+		{base: "/", want: "/assets/"},
+		{base: "/keeper", want: "/keeper/assets/"},
+		{base: "/keeper/", want: "/keeper/assets/"},
+	} {
+		if got := absoluteAssetPrefix(tc.base); got != tc.want {
+			t.Fatalf("absoluteAssetPrefix(%q)=%q, want %q", tc.base, got, tc.want)
+		}
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(sub) == 0 || (len(s) >= len(sub) && (func() bool { return stringContains(s, sub) })())
 }
