@@ -47,13 +47,14 @@ describe('App role route normalization', () => {
     expect(appSource).toMatch(/const clearSession = useCallback\(\(\) => \{[\s\S]*?clearUsageStats\(\);[\s\S]*?setAuthState\('unauthenticated'\);/);
   });
 
-  it('mounts the shared footer from the app shell', () => {
+  it('does not mount a global app footer in the shell', () => {
     expect(appSource).toContain("import './App.css';");
-    expect(appSource).toContain("import { AppFooter } from './components/AppFooter';");
-    expect(appSource).toMatch(/<div className="app-frame"[^>]*>[\s\S]*<main className="app-main">\{page\}<\/main>[\s\S]*<AppFooter loadVersion=\{authState === 'authenticated'\} \/>[\s\S]*<\/div>/);
+    expect(appSource).not.toContain("import { AppFooter } from './components/AppFooter';");
+    expect(appSource).not.toContain('<AppFooter');
+    expect(appSource).toMatch(/<div className="app-frame"[^>]*>[\s\S]*<main className="app-main">\{page\}<\/main>[\s\S]*<\/div>/);
   });
 
-  it('lets app pages fill the space above the shared footer', () => {
+  it('lets app pages fill the viewport shell without a shared footer', () => {
     expect(appStylesSource).toMatch(/\.app-main\s*\{[\s\S]*?display:\s*flex;/);
     expect(appStylesSource).toMatch(/\.app-main\s*\{[\s\S]*?flex-direction:\s*column;/);
   });

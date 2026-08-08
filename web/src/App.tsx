@@ -12,7 +12,6 @@ import {
   stripAppBasePath,
   type ShareTab,
 } from './lib/shareMode';
-import { AppFooter } from './components/AppFooter';
 import { KeyOverviewPage } from './pages/KeyOverviewPage';
 import { LoginPage } from './pages/LoginPage';
 import { UsagePage } from './pages/UsagePage';
@@ -161,7 +160,6 @@ function App() {
   return (
     <div className="app-frame" data-embed={isEmbeddedInCPAMC ? 'cpamc' : undefined}>
       <main className="app-main">{page}</main>
-      <AppFooter loadVersion={authState === 'authenticated'} />
     </div>
   );
 }

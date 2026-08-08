@@ -2,7 +2,8 @@ import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
 const LANGUAGE_STORAGE_KEY = 'cpa-usage-keeper-language';
-const DEFAULT_LANGUAGE = 'en';
+// First visit / no saved preference: Simplified Chinese.
+const DEFAULT_LANGUAGE = 'zh';
 export const SUPPORTED_LANGUAGES = ['en', 'zh', 'zh-TW'] as const;
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
@@ -11,7 +12,7 @@ export const isSupportedLanguage = (language: string | null): language is Suppor
   SUPPORTED_LANGUAGES.includes(language as SupportedLanguage)
 );
 
-const getInitialLanguage = (): SupportedLanguage => {
+export const getInitialLanguage = (): SupportedLanguage => {
   if (typeof window === 'undefined') return DEFAULT_LANGUAGE;
   const saved = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
   return isSupportedLanguage(saved) ? saved : DEFAULT_LANGUAGE;

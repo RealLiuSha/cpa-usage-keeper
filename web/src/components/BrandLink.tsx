@@ -1,4 +1,3 @@
-import { GITHUB_REPOSITORY_URL } from '@/utils/constants';
 import keeperIconUrl from '@/assets/keeper-icon.svg';
 import styles from './BrandLink.module.scss';
 
@@ -6,13 +5,14 @@ type BrandLinkProps = {
   className?: string;
 };
 
+/** Product mark for the app shell. Not a navigation control (no external URL). */
 export function BrandLink({ className = '' }: BrandLinkProps) {
-  const linkClassName = `${styles.brandLink} ${className}`.trim();
+  const markClassName = `${styles.brandLink} ${className}`.trim();
 
   return (
-    <a className={linkClassName} href={GITHUB_REPOSITORY_URL} target="_blank" rel="noreferrer">
+    <div className={markClassName} aria-label="CPA Usage Keeper">
       <img className={styles.brandMark} src={keeperIconUrl} alt="" aria-hidden="true" />
       <span className={styles.brandWord}>KEEPER</span>
-    </a>
+    </div>
   );
 }

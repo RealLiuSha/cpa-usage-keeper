@@ -25,4 +25,9 @@ export default defineConfig(({ command }) => ({
       },
     },
   } : undefined,
+  // Per-file `// @vitest-environment happy-dom` docblocks stay authoritative:
+  // no `environment` here, so the default node environment is unchanged.
+  test: {
+    setupFiles: ['./src/i18n/testSetup.ts'],
+  },
 }))
