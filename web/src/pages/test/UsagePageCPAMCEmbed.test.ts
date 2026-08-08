@@ -7,6 +7,15 @@ describe('UsagePage CPAMC embed behavior', () => {
   it('does not render the Back to CPA link in CPAMC embed mode', () => {
     expect(usagePageSource).toContain("import { isCPAMCEmbed } from '@/embed/cpamcEmbed';");
     expect(usagePageSource).toMatch(/const isEmbeddedInCPAMC = isCPAMCEmbed\(\);/);
-    expect(usagePageSource).toMatch(/\{\(!isEmbeddedInCPAMC && cpaManagementURL\) && \(/);
+    expect(usagePageSource).toMatch(/\{\(!isEmbeddedInCPAMC && !shareMode && cpaManagementURL\) && \(/);
+  });
+
+  it('does not render the Back to CPA link in unauthenticated share mode', () => {
+    expect(usagePageSource).toMatch(/\{\(!isEmbeddedInCPAMC && !shareMode && cpaManagementURL\) && \(/);
+    expect(usagePageSource).toContain('shareMode');
+  });
+
+  it('marks ranking as readOnly in share mode so local avatars are not edit buttons', () => {
+    expect(usagePageSource).toContain('readOnly={shareMode}');
   });
 });

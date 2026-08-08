@@ -765,6 +765,12 @@ describe('UsagePage tab labels', () => {
 
     expect(values).toEqual(['overview', 'analysis', 'events', 'auth-files', 'ai-provider', 'settings']);
   });
+
+  it('limits share mode navigation to overview, analysis, and ranking', () => {
+    const values = getUsageTabOptions((key) => key, { shareMode: true }).map((option) => option.value);
+    expect(values).toEqual(['overview', 'analysis', 'ranking']);
+    expect(values).not.toEqual(expect.arrayContaining(['events', 'auth-files', 'ai-provider', 'settings']));
+  });
 });
 
 describe('UsagePage credentials tab migration', () => {

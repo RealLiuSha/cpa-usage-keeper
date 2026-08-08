@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"strings"
 	"testing"
 
 	"cpa-usage-keeper/internal/entities"
@@ -69,6 +70,26 @@ func TestCPAAPIKeyDisplayNameForPluginDoesNotRedactShortID(t *testing.T) {
 	row.KeyAlias = "Team A"
 	if got := CPAAPIKeyDisplayName(row); got != "Team A" {
 		t.Fatalf("expected alias, got %q", got)
+	}
+}
+
+func TestCPAAPIKeyPublicDisplayNameNeverReturnsRawAPIKey(t *testing.T) {
+	// Incomplete plugin row: no ExternalID/preview — must not echo APIKey.
+	plugin := entities.CPAAPIKey{
+		ID:     7,
+		APIKey: "secret-or-id",
+		Source: entities.CPAAPIKeySourcePluginKeyPolicy,
+	}
+	if got := CPAAPIKeyPublicDisplayName(plugin); got != "plugin-key-7" {
+		t.Fatalf("expected stable public plugin fallback, got %q", got)
+	}
+	plugin.KeyAlias = "Team"
+	if got := CPAAPIKeyPublicDisplayName(plugin); got != "Team" {
+		t.Fatalf("expected alias, got %q", got)
+	}
+	native := entities.CPAAPIKey{ID: 3, APIKey: "sk-alpha123456", Source: entities.CPAAPIKeySourceNative}
+	if got := CPAAPIKeyPublicDisplayName(native); strings.Contains(got, "sk-alpha123456") {
+		t.Fatalf("public label leaked raw native key: %q", got)
 	}
 }
 

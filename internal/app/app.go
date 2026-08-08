@@ -351,6 +351,7 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 					CPAPublicURL:               cfg.CPAPublicURL,
 					CPARequestLogAccessEnabled: cfg.CPARequestLogAccessEnabled,
 				},
+				SharePublicEnabled: cfg.SharePublicEnabled,
 			},
 		),
 	}, nil

@@ -148,6 +148,20 @@ type analysisAPIKeyInfo struct {
 }
 
 func registerUsageAnalysisRoute(router gin.IRoutes, usageProvider service.UsageProvider, cpaAPIKeyProvider service.CPAAPIKeyProvider) {
+	registerUsageAnalysisRouteWithLabelMode(router, usageProvider, cpaAPIKeyProvider, false)
+}
+
+// registerPublicUsageAnalysisRoute uses public-safe key labels (never raw secrets).
+func registerPublicUsageAnalysisRoute(router gin.IRoutes, usageProvider service.UsageProvider, cpaAPIKeyProvider service.CPAAPIKeyProvider) {
+	registerUsageAnalysisRouteWithLabelMode(router, usageProvider, cpaAPIKeyProvider, true)
+}
+
+func registerUsageAnalysisRouteWithLabelMode(
+	router gin.IRoutes,
+	usageProvider service.UsageProvider,
+	cpaAPIKeyProvider service.CPAAPIKeyProvider,
+	publicSafeLabels bool,
+) {
 	router.GET("/usage/analysis", func(c *gin.Context) {
 		if usageProvider == nil {
 			c.JSON(http.StatusOK, emptyAnalysisResponse())
@@ -165,7 +179,7 @@ func registerUsageAnalysisRoute(router gin.IRoutes, usageProvider service.UsageP
 			writeInternalError(c, "get analysis failed", err)
 			return
 		}
-		apiKeyInfos, err := loadCPAAPIKeyInfos(c, cpaAPIKeyProvider)
+		apiKeyInfos, err := loadCPAAPIKeyInfos(c, cpaAPIKeyProvider, publicSafeLabels)
 		if err != nil {
 			return
 		}
@@ -218,7 +232,7 @@ func emptyAnalysisLatencyDiagnosticsResponse() analysisLatencyDiagnostics {
 	return analysisLatencyDiagnostics{Supported: true, Points: []analysisLatencyPoint{}, Density: []analysisLatencyDensityCell{}}
 }
 
-func loadCPAAPIKeyInfos(c *gin.Context, provider service.CPAAPIKeyProvider) (map[string]analysisAPIKeyInfo, error) {
+func loadCPAAPIKeyInfos(c *gin.Context, provider service.CPAAPIKeyProvider, publicSafeLabels bool) (map[string]analysisAPIKeyInfo, error) {
 	if provider == nil {
 		return map[string]analysisAPIKeyInfo{}, nil
 	}
@@ -229,9 +243,13 @@ func loadCPAAPIKeyInfos(c *gin.Context, provider service.CPAAPIKeyProvider) (map
 	}
 	infos := make(map[string]analysisAPIKeyInfo, len(rows))
 	for _, row := range rows {
+		label := helper.CPAAPIKeyDisplayName(row)
+		if publicSafeLabels {
+			label = helper.CPAAPIKeyPublicDisplayName(row)
+		}
 		infos[row.APIKey] = analysisAPIKeyInfo{
 			ID:    strconv.FormatInt(row.ID, 10),
-			Label: helper.CPAAPIKeyDisplayName(row),
+			Label: label,
 		}
 	}
 	return infos, nil

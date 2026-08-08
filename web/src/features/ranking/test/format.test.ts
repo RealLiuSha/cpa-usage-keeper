@@ -37,8 +37,9 @@ describe('ranking value formatting', () => {
   it('converts five-minute peaks to per-minute values and overall score to points', () => {
     expect(formatLeaderboardValue('peak_tpm', entry(5_000))).toBe('1.00K');
     expect(formatLeaderboardValue('peak_rpm', entry(45))).toBe('9');
-    expect(formatLeaderboardValue('overall', entry(9_325))).toBe('93.25 PTS');
-    expect(formatLeaderboardValue('overall', entry(93), 'local')).toBe('93 PTS');
+    // 默认 scope 为 local：分值按整数 PTS；community 仍按 /100 两位小数。
+    expect(formatLeaderboardValue('overall', entry(93))).toBe('93 PTS');
+    expect(formatLeaderboardValue('overall', entry(9_325), 'community')).toBe('93.25 PTS');
   });
 
   it('formats overall supporting metrics without exposing a participant identifier', () => {

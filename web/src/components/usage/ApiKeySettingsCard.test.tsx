@@ -2,7 +2,15 @@ import React from 'react';
 import '@/i18n';
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ApiKeySettingsCard, copyApiKeyToClipboard, getApiKeySettingsVisibleKey, isPluginKeyPolicySource } from './ApiKeySettingsCard';
+import {
+  API_KEY_SETTINGS_DEFAULT_PAGE_SIZE,
+  ApiKeySettingsCard,
+  copyApiKeyToClipboard,
+  filterApiKeySettingsItems,
+  getApiKeySettingsVisibleKey,
+  isPluginKeyPolicySource,
+  paginateApiKeySettingsItems,
+} from './ApiKeySettingsCard';
 import type { CpaApiKeySettingsItem } from '@/lib/types';
 
 const apiKeys: CpaApiKeySettingsItem[] = [
@@ -65,6 +73,46 @@ describe('ApiKeySettingsCard', () => {
     expect(countOccurrences(html, '>Copy<')).toBe(2);
     expect(isPluginKeyPolicySource('plugin:cpa-key-policy')).toBe(true);
     expect(isPluginKeyPolicySource('native')).toBe(false);
+  });
+
+  it('renders client search and pagination controls with default page size 10', () => {
+    const html = renderCard();
+    expect(html).toContain('Search by alias, key, or source');
+    expect(html).toContain('Size');
+    expect(html).toContain('Previous');
+    expect(html).toContain('Next');
+    expect(html).toContain('1 / 1');
+    expect(html).toContain(`value="${API_KEY_SETTINGS_DEFAULT_PAGE_SIZE}"`);
+    expect(API_KEY_SETTINGS_DEFAULT_PAGE_SIZE).toBe(10);
+  });
+
+  it('filters settings items client-side by alias, key, and source', () => {
+    expect(filterApiKeySettingsItems(apiKeys, 'team').map((item) => item.id)).toEqual(['9007199254740995']);
+    expect(filterApiKeySettingsItems(apiKeys, 'PRIMARY').map((item) => item.id)).toEqual(['9007199254740993']);
+    expect(filterApiKeySettingsItems(apiKeys, 'plugin:cpa-key-policy').map((item) => item.id)).toEqual(['9007199254740995']);
+    expect(filterApiKeySettingsItems(apiKeys, 'no-such-key')).toEqual([]);
+    expect(filterApiKeySettingsItems(apiKeys, '  ').length).toBe(3);
+  });
+
+  it('paginates filtered items with a default page size of 10', () => {
+    const many = Array.from({ length: 23 }, (_, index) => ({
+      ...apiKeys[0],
+      id: String(index + 1),
+      keyAlias: `Key ${index + 1}`,
+      label: `Key ${index + 1}`,
+    }));
+    const page1 = paginateApiKeySettingsItems(many, 1, 10);
+    expect(page1.pageItems).toHaveLength(10);
+    expect(page1.totalPages).toBe(3);
+    expect(page1.page).toBe(1);
+    expect(page1.pageItems[0].id).toBe('1');
+
+    const page3 = paginateApiKeySettingsItems(many, 3, 10);
+    expect(page3.pageItems).toHaveLength(3);
+    expect(page3.page).toBe(3);
+
+    const clamped = paginateApiKeySettingsItems(many, 99, 10);
+    expect(clamped.page).toBe(3);
   });
 
   it('uses the title eye toggle state to choose masked or raw keys for native only', () => {

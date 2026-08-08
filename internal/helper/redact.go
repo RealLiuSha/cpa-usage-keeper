@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"strconv"
 	"strings"
 
 	"cpa-usage-keeper/internal/entities"
@@ -57,4 +58,32 @@ func CPAAPIKeyDisplayName(row entities.CPAAPIKey) string {
 		}
 	}
 	return CPAAPIKeyMaskedDisplayKey(row)
+}
+
+// CPAAPIKeyPublicDisplayName is for anonymous/share responses.
+// Never returns raw APIKey/secret fields; falls back to stable local id when metadata is incomplete.
+func CPAAPIKeyPublicDisplayName(row entities.CPAAPIKey) string {
+	if alias := strings.TrimSpace(row.KeyAlias); alias != "" {
+		return alias
+	}
+	if entities.IsPluginKeyPolicySource(row.Source) {
+		if externalID := strings.TrimSpace(row.ExternalID); externalID != "" {
+			return externalID
+		}
+		if preview := strings.TrimSpace(row.DisplayKey); preview != "" {
+			return preview
+		}
+		if row.ID > 0 {
+			return "plugin-key-" + strconv.FormatInt(row.ID, 10)
+		}
+		return "plugin-key"
+	}
+	// Native: only masked secret material.
+	if masked := CPAAPIKeyMaskedDisplayKey(row); masked != "" && masked != "unknown" {
+		return masked
+	}
+	if row.ID > 0 {
+		return "api-key-" + strconv.FormatInt(row.ID, 10)
+	}
+	return "unknown"
 }

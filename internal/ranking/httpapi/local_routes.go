@@ -22,8 +22,8 @@ type updateLocalProfileRequest struct {
 	AvatarID uint8  `json:"avatar_id"`
 }
 
-// RegisterLocalRoutes 只挂载本地只读榜单，不复用 Community 的参与和上报动作。
-func RegisterLocalRoutes(router gin.IRoutes, provider LocalProvider) {
+// RegisterLocalLeaderboardReadRoutes 只挂载本地榜单 GET，供公开 share 面复用。
+func RegisterLocalLeaderboardReadRoutes(router gin.IRoutes, provider LocalProvider) {
 	router.GET("/ranking/local/leaderboards", func(c *gin.Context) {
 		setNoStoreHeaders(c)
 		if provider == nil {
@@ -52,6 +52,11 @@ func RegisterLocalRoutes(router gin.IRoutes, provider LocalProvider) {
 		}
 		c.JSON(http.StatusOK, board)
 	})
+}
+
+// RegisterLocalRoutes 挂载本地榜单读取与资料更新；不复用 Community 的参与和上报动作。
+func RegisterLocalRoutes(router gin.IRoutes, provider LocalProvider) {
+	RegisterLocalLeaderboardReadRoutes(router, provider)
 
 	router.PATCH("/ranking/local/profiles/:id", func(c *gin.Context) {
 		setNoStoreHeaders(c)

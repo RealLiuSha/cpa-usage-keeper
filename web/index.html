@@ -6,6 +6,10 @@
     <title>KEEPER</title>
     <script>
       window.__APP_BASE_PATH__ = "__APP_BASE_PATH__";
+      // Pure string assignment (not a foldable literal compare). Server replaces the quoted token.
+      // Vite default leaves the placeholder so enabled stays false in pure frontend builds.
+      window.__SHARE_PUBLIC_FLAG__ = "__SHARE_PUBLIC_BOOL__";
+      window.__SHARE_PUBLIC_ENABLED__ = window.__SHARE_PUBLIC_FLAG__ === "true";
     </script>
   </head>
   <body>

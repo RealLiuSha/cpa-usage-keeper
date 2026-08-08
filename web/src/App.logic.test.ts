@@ -18,6 +18,29 @@ describe('App role route normalization', () => {
     expect(shouldNormalizeRolePath('api_key_viewer', '/key-overview')).toBe(false);
   });
 
+  it('does not bounce share dashboard paths to the role home when share public is enabled', () => {
+    expect(shouldNormalizeRolePath('admin', '/share/overview', true)).toBe(false);
+    expect(shouldNormalizeRolePath('admin', '/share/analysis', true)).toBe(false);
+    expect(shouldNormalizeRolePath('admin', '/share/ranking', true)).toBe(false);
+  });
+
+  it('normalizes share paths to role home when share public is disabled', () => {
+    expect(shouldNormalizeRolePath('admin', '/share/overview', false)).toBe(true);
+    expect(shouldNormalizeRolePath('admin', '/', false)).toBe(false);
+  });
+
+  it('renders UsagePage in share mode without waiting for a session', () => {
+    expect(appSource).toContain('const isShareMode = Boolean(shareTab)');
+    expect(appSource).toContain('<UsagePage shareMode initialShareTab={shareTab} />');
+    expect(appSource).toMatch(/if \(isShareMode\) return;/);
+  });
+
+  it('does not use mutable share API flags or StrictMode cleanup flips', () => {
+    expect(appSource).toContain('prepareShareModeFromLocation(window.location.pathname, window.__APP_BASE_PATH__)');
+    expect(appSource).not.toContain('setSharePublicAPIEnabled');
+    expect(appSource).toContain('Pure path + server feature flag');
+  });
+
   it('clears stale overview auth errors when the session is cleared', () => {
     expect(appSource).toContain("import { useUsageStatsStore } from './stores/useUsageStatsStore';");
     expect(appSource).toMatch(/const clearUsageStats = useUsageStatsStore\(\(state\) => state\.clearUsageStats\);/);

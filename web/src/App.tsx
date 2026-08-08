@@ -5,6 +5,13 @@ import './App.css';
 import './embed/cpamcEmbed.css';
 import { ApiError, appPath, clearEmbedSessionToken, getSession, login, loginWithCPAAPIKey } from './lib/api';
 import type { AuthRole, AuthSessionAPIKeySummary } from './lib/types';
+import {
+  isSharePublicFeatureEnabled,
+  prepareShareModeFromLocation,
+  resolveShareTab,
+  stripAppBasePath,
+  type ShareTab,
+} from './lib/shareMode';
 import { AppFooter } from './components/AppFooter';
 import { KeyOverviewPage } from './pages/KeyOverviewPage';
 import { LoginPage } from './pages/LoginPage';
@@ -18,19 +25,25 @@ export const getRoleHomePath = (role: AuthRole): '/' | '/key-overview' => (
   role === 'api_key_viewer' ? '/key-overview' : '/'
 );
 
-const stripBasePath = (pathname: string, basePath: string | undefined): string => {
-  if (!basePath || basePath === '/' || basePath === '__APP_BASE_PATH__') return pathname || '/';
-  const normalizedBase = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath;
-  if (!pathname.startsWith(normalizedBase)) return pathname || '/';
-  const stripped = pathname.slice(normalizedBase.length);
-  return stripped || '/';
+export const shouldNormalizeRolePath = (
+  role: AuthRole,
+  currentPath: string,
+  sharePublicEnabled: boolean = isSharePublicFeatureEnabled(),
+): boolean => {
+  // Only skip normalization when share public is actually enabled for this deployment.
+  // Path-only checks leave admins stuck on /share/* after login when the feature is off.
+  if (sharePublicEnabled && resolveShareTab(currentPath)) return false;
+  return currentPath !== getRoleHomePath(role);
 };
-
-export const shouldNormalizeRolePath = (role: AuthRole, currentPath: string): boolean => currentPath !== getRoleHomePath(role);
 
 function App() {
   const { t } = useTranslation();
-  const [authState, setAuthState] = useState<AuthState>('checking');
+  // Pure path + server feature flag; apiPath re-derives share routing from location (no mutable global).
+  const [shareTab] = useState<ShareTab | null>(() => (
+    prepareShareModeFromLocation(window.location.pathname, window.__APP_BASE_PATH__)
+  ));
+  const isShareMode = Boolean(shareTab);
+  const [authState, setAuthState] = useState<AuthState>(isShareMode ? 'unauthenticated' : 'checking');
   const [authRole, setAuthRole] = useState<AuthRole | null>(null);
   const [sessionAPIKey, setSessionAPIKey] = useState<AuthSessionAPIKeySummary | undefined>();
   const [adminLoginError, setAdminLoginError] = useState('');
@@ -64,10 +77,12 @@ function App() {
   }, [applySession]);
 
   useEffect(() => {
+    // Share pages do not require a session; skip the login gate entirely.
+    if (isShareMode) return;
     void loadSession().catch(() => {
       clearSession();
     });
-  }, [clearSession, loadSession]);
+  }, [clearSession, isShareMode, loadSession]);
 
   useEffect(() => {
     notifyCPAMCEmbedReady();
@@ -75,7 +90,7 @@ function App() {
 
   useEffect(() => {
     if (authState !== 'authenticated' || !authRole) return;
-    const currentPath = stripBasePath(window.location.pathname, window.__APP_BASE_PATH__);
+    const currentPath = stripAppBasePath(window.location.pathname, window.__APP_BASE_PATH__);
     if (!shouldNormalizeRolePath(authRole, currentPath)) return;
     window.history.replaceState(null, '', appPath(getRoleHomePath(authRole)) + cpamcEmbedSearch());
   }, [authRole, authState]);
@@ -131,7 +146,9 @@ function App() {
   }, [clearSession, loadSession, t]);
 
   let page: ReactNode;
-  if (authState === 'checking') {
+  if (isShareMode && shareTab) {
+    page = <UsagePage shareMode initialShareTab={shareTab} />;
+  } else if (authState === 'checking') {
     page = <div className="app-checking" aria-busy="true" />;
   } else if (authState === 'unauthenticated') {
     page = <LoginPage loading={submitting} adminError={adminLoginError} apiKeyError={apiKeyLoginError} onPasswordSubmit={handlePasswordLogin} onAPIKeySubmit={handleAPIKeyLogin} />;

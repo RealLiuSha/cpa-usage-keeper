@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ApiError, createUsageEventRequestLogDownloadURL, exportUsageEvents, fetchAnalysis, fetchAnalysisLatency, fetchAuthSessions, fetchCpaApiKeyOptions, fetchCpaApiKeySettings, fetchStatus, fetchUpdateCheck, fetchUsageEventModelFilterOptions, fetchUsageEventRequestLog, fetchUsageEventSourceFilterOptions, fetchUsageEvents, fetchVersion, isUsageRangeBoundsConflict, logout, revokeAuthSession, updateCpaApiKeyAlias, type UsageEventsExportFormat } from '@/lib/api';
+import { ApiError, appPath, createUsageEventRequestLogDownloadURL, exportUsageEvents, fetchAnalysis, fetchAnalysisLatency, fetchAuthSessions, fetchCpaApiKeyOptions, fetchCpaApiKeySettings, fetchStatus, fetchUpdateCheck, fetchUsageEventModelFilterOptions, fetchUsageEventRequestLog, fetchUsageEventSourceFilterOptions, fetchUsageEvents, fetchVersion, isUsageRangeBoundsConflict, logout, revokeAuthSession, updateCpaApiKeyAlias, type UsageEventsExportFormat } from '@/lib/api';
+import { sharePathForTab } from '@/lib/shareMode';
 import type { AnalysisLatencyDiagnostics, AnalysisResponse, AuthManagedSessionItem, CpaApiKeyOption, CpaApiKeySettingsItem, OverviewRealtimeWindow, StatusResponse, UsageCustomRange, UsageEvent, UsageEventRequestLogResponse, UsageSourceFilterOption, UsageTimeRange, VersionResponse } from '@/lib/types';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
@@ -45,13 +46,14 @@ import type { Theme } from '@/types';
 import { BrandLink } from '@/components/BrandLink';
 import { isCPAMCEmbed } from '@/embed/cpamcEmbed';
 import { RankingPage } from '@/features/ranking/RankingPage';
-import { RankingScopeSwitch } from '@/features/ranking/components/RankingScopeSwitch';
 import { useRankingData } from '@/features/ranking/hooks/useRankingData';
 import { useLocalRankingData } from '@/features/ranking/hooks/useLocalRankingData';
 import { resolveLocalRankingPreviewAPI, resolveRankingPreviewAPI } from '@/features/ranking/previewMock';
-import { loadRankingScope, persistRankingScope } from '@/features/ranking/scope';
 import type { LocalRankingProfileRequest, RankingScope } from '@/features/ranking/types';
 import styles from './UsagePage.module.scss';
+
+// 排名页固定本地榜；社区榜与 Local|Community 切换已隐藏。
+const RANKING_SCOPE: RankingScope = 'local';
 
 const TIME_RANGE_STORAGE_KEY = 'cli-proxy-usage-time-range-v1';
 const LEGACY_CUSTOM_RANGE_STORAGE_KEY = 'cli-proxy-usage-custom-range-v1';
@@ -783,14 +785,20 @@ export const normalizeUsageTabValue = (value: unknown): UsageTab | null => {
   return isUsageTab(value) ? value : null;
 };
 
+const SHARE_USAGE_TABS: readonly UsageTab[] = ['overview', 'analysis', 'ranking'];
+
 export const getUsageTabOptions = (
   translate: Translate,
-  { includeRanking = true }: { includeRanking?: boolean } = {},
-): Array<{ value: UsageTab; label: string }> =>
-  USAGE_TAB_OPTIONS.filter((value) => includeRanking || value !== 'ranking').map((value) => ({
+  { includeRanking = true, shareMode = false }: { includeRanking?: boolean; shareMode?: boolean } = {},
+): Array<{ value: UsageTab; label: string }> => {
+  const values = shareMode
+    ? SHARE_USAGE_TABS
+    : USAGE_TAB_OPTIONS.filter((value) => includeRanking || value !== 'ranking');
+  return values.map((value) => ({
     value,
     label: translate(USAGE_TAB_LABEL_KEYS[value]),
   }));
+};
 
 const loadUsageTab = (): UsageTab => {
   try {
@@ -841,7 +849,15 @@ export const triggerBrowserURLDownload = (url: string) => {
   link.remove();
 };
 
-export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
+export function UsagePage({
+  onAuthRequired,
+  shareMode = false,
+  initialShareTab,
+}: {
+  onAuthRequired?: () => void;
+  shareMode?: boolean;
+  initialShareTab?: 'overview' | 'analysis' | 'ranking';
+}) {
   const { t, i18n } = useTranslation();
   const isMobile = useMediaQuery('(max-width: 768px)');
   const isEmbeddedInCPAMC = isCPAMCEmbed();
@@ -850,14 +866,13 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const setTheme = useThemeStore((state) => state.setTheme);
   const isDark = resolvedTheme === 'dark';
   const [activeTab, setActiveTab] = useState<UsageTab>(() => {
+    if (shareMode) {
+      return initialShareTab && SHARE_USAGE_TABS.includes(initialShareTab) ? initialShareTab : DEFAULT_USAGE_TAB;
+    }
     const loadedTab = loadUsageTab();
     return isEmbeddedInCPAMC && loadedTab === 'ranking' ? DEFAULT_USAGE_TAB : loadedTab;
   });
-  const [rankingScope, setRankingScope] = useState<RankingScope>(loadRankingScope);
-  const handleRankingScopeChange = useCallback((scope: RankingScope) => {
-    setRankingScope(scope);
-    persistRankingScope(scope);
-  }, []);
+  const rankingScope = RANKING_SCOPE;
   const [loadedTimeRange] = useState(loadTimeRange);
   const pendingLegacyCustomRangeRef = useRef(loadedTimeRange.pendingLegacyCustomRange);
   const [timeRangeState, setTimeRangeState] = useState<StoredUsageRangeState>(loadedTimeRange.state);
@@ -1081,9 +1096,17 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const analysisRequestControllerRef = useRef<AbortController | null>(null);
 
   const tabOptions = useMemo(
-    () => getUsageTabOptions(t, { includeRanking: !isEmbeddedInCPAMC }),
-    [isEmbeddedInCPAMC, t],
+    () => getUsageTabOptions(t, { includeRanking: !isEmbeddedInCPAMC, shareMode }),
+    [isEmbeddedInCPAMC, shareMode, t],
   );
+
+  const handleTabChange = useCallback((tab: UsageTab) => {
+    if (shareMode && !SHARE_USAGE_TABS.includes(tab)) return;
+    setActiveTab(tab);
+    if (shareMode && (tab === 'overview' || tab === 'analysis' || tab === 'ranking')) {
+      window.history.replaceState(null, '', appPath(sharePathForTab(tab)));
+    }
+  }, [shareMode]);
   const apiKeySelectOptions = useMemo(
     () => [
       { value: '', label: t('usage_stats.api_key_filter_all') },
@@ -1359,14 +1382,14 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
 
   useEffect(() => {
     try {
-      if (typeof localStorage === 'undefined') {
+      if (typeof localStorage === 'undefined' || shareMode) {
         return;
       }
       localStorage.setItem(USAGE_TAB_STORAGE_KEY, activeTab);
     } catch {
       // Ignore storage errors.
     }
-  }, [activeTab]);
+  }, [activeTab, shareMode]);
 
   useEffect(() => {
     saveRequestEventsPreferences({
@@ -1400,6 +1423,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   }, []);
 
   useEffect(() => {
+    if (shareMode) return;
     const requestController = new AbortController();
     void fetchStatus(requestController.signal)
       .then((nextStatus) => {
@@ -1416,9 +1440,10 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     return () => {
       requestController.abort();
     };
-  }, [onAuthRequired]);
+  }, [onAuthRequired, shareMode]);
 
   useEffect(() => {
+    if (shareMode) return;
     const requestController = new AbortController();
     void loadUsagePageVersionInfo({
       loadVersion: fetchVersion,
@@ -1429,7 +1454,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     return () => {
       requestController.abort();
     };
-  }, [onAuthRequired]);
+  }, [onAuthRequired, shareMode]);
 
   useEffect(() => {
     void loadApiKeyOptions();
@@ -1728,8 +1753,13 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   }, [onAuthRequired, recoverRangeBoundsConflict, refreshActiveTab]);
 
   const handleRequestLogout = useCallback(() => {
+    if (shareMode) {
+      // Share views have no session; the control means “go sign in”.
+      window.location.assign(appPath('/'));
+      return;
+    }
     setLogoutConfirmOpen(true);
-  }, []);
+  }, [shareMode]);
 
   const handleConfirmLogout = useCallback(async () => {
     setLoggingOut(true);
@@ -1887,7 +1917,6 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     : '';
   // 只有需要时间范围的 tab 才渲染 Range 控件，避免 Credentials/Pricing 产生空白占位。
   const showRangeControls = shouldShowRangeControls(activeTab);
-  const showRankingScopeControl = activeTab === 'ranking' && !isEmbeddedInCPAMC;
   const {
     requestsSparkline,
     tokensSparkline,
@@ -1958,12 +1987,12 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
             )}
             <MainActionButton
               type="button"
-              aria-label={t('common.logout')}
+              aria-label={shareMode ? t('common.login') : t('common.logout')}
               onClick={handleRequestLogout}
               disabled={loggingOut}
               loading={loggingOut}
             >
-              {loggingOut ? t('common.loading') : t('common.logout')}
+              {loggingOut ? t('common.loading') : (shareMode ? t('common.login') : t('common.logout'))}
             </MainActionButton>
           </div>
         </header>
@@ -1979,7 +2008,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
               </div>
             )}
 
-            {(!isEmbeddedInCPAMC && cpaManagementURL) && (
+            {(!isEmbeddedInCPAMC && !shareMode && cpaManagementURL) && (
               <div className={styles.toolbarMetaRow}>
                 <div className={styles.toolbarMetaRight}>
                   <a
@@ -2038,7 +2067,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                     role="tab"
                     aria-selected={activeTab === option.value}
                     className={`${styles.tabPill} ${activeTab === option.value ? styles.tabPillActive : ''}`.trim()}
-                    onClick={() => setActiveTab(option.value)}
+                    onClick={() => handleTabChange(option.value)}
                   >
                     {option.label}
                   </button>
@@ -2081,17 +2110,6 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                       </div>
                     </div>
                   </div>
-                  )}
-                  {!isEmbeddedInCPAMC && (
-                    <div
-                      className={`${styles.rankingScopeTransition} ${showRankingScopeControl ? styles.rankingScopeTransitionOpen : ''}`.trim()}
-                      aria-hidden={!showRankingScopeControl}
-                      inert={!showRankingScopeControl}
-                    >
-                      <div className={styles.rankingScopeTransitionInner}>
-                        <RankingScopeSwitch value={rankingScope} onChange={handleRankingScopeChange} />
-                      </div>
-                    </div>
                   )}
                 </div>
                 <div className={styles.usageRefreshSlot}>
@@ -2194,6 +2212,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                 leaderboardError={rankingScope === 'community' ? rankingData.leaderboardError : localRankingData.leaderboardError}
                 action={rankingScope === 'community' ? rankingData.action : null}
                 actionError={rankingScope === 'community' ? rankingData.actionError : null}
+                readOnly={shareMode}
                 onClearActionError={rankingData.clearActionError}
                 onJoin={rankingData.join}
                 onSync={rankingData.sync}

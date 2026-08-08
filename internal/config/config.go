@@ -57,6 +57,8 @@ type Config struct {
 	CPAManagementKey string
 	// CPARequestLogAccessEnabled 控制是否允许通过 Keeper 访问 CPA request log。
 	CPARequestLogAccessEnabled bool
+	// SharePublicEnabled 控制是否开放 /share 与 /api/v1/public 匿名只读看板；默认开启，可用 SHARE_PUBLIC_ENABLED=false 关闭。
+	SharePublicEnabled bool
 	// RedisQueueAddr 是 CPA management data stream 的 TCP 地址，空值时按 CPA_BASE_URL 推导。
 	RedisQueueAddr string
 	// RedisQueueTLS 控制是否使用 TLS 连接 Redis 队列。
@@ -233,6 +235,10 @@ func Load(options LoadOptions) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	sharePublicEnabled, err := getBool("SHARE_PUBLIC_ENABLED", true)
+	if err != nil {
+		return nil, err
+	}
 
 	appBasePath, err := normalizeBasePath(strings.TrimSpace(os.Getenv("APP_BASE_PATH")))
 	if err != nil {
@@ -253,6 +259,7 @@ func Load(options LoadOptions) (*Config, error) {
 		CPABaseURL:                 strings.TrimSpace(os.Getenv("CPA_BASE_URL")),
 		CPAManagementKey:           strings.TrimSpace(os.Getenv("CPA_MANAGEMENT_KEY")),
 		CPARequestLogAccessEnabled: cpaRequestLogAccessEnabled,
+		SharePublicEnabled:         sharePublicEnabled,
 		RedisQueueAddr:             strings.TrimSpace(os.Getenv("REDIS_QUEUE_ADDR")),
 		RedisQueueTLS:              redisQueueTLS,
 		RedisQueueBatchSize:        redisQueueBatchSize,

@@ -30,6 +30,7 @@ const resources = {
         delete: 'Delete',
         close: 'Close',
         logout: 'Sign out',
+        login: 'Sign in',
         retry: 'Retry'
       },
       notification: {
@@ -482,6 +483,8 @@ const resources = {
         api_key_settings_title: 'API Key Settings',
         api_key_settings_subtitle: 'Set display aliases for synced CPA API keys.',
         api_key_settings_empty: 'No CPA API keys synced yet.',
+        api_key_settings_search_placeholder: 'Search by alias, key, or source',
+        api_key_settings_search_empty: 'No API keys match this search.',
         api_key_settings_id: 'Local ID',
         api_key_settings_display_key: 'API Key',
         api_key_settings_logical_id: 'Logical ID',
@@ -781,6 +784,7 @@ const resources = {
         delete: '删除',
         close: '关闭',
         logout: '退出登录',
+        login: '登录',
         retry: '重试'
       },
       notification: {
@@ -1233,6 +1237,8 @@ const resources = {
         api_key_settings_title: 'API Key 设置',
         api_key_settings_subtitle: '为已同步的 CPA API Key 设置展示别名。',
         api_key_settings_empty: '暂无已同步的 CPA API Key。',
+        api_key_settings_search_placeholder: '按别名、密钥或来源搜索',
+        api_key_settings_search_empty: '没有匹配的 API Key。',
         api_key_settings_id: '本地 ID',
         api_key_settings_display_key: 'API Key',
         api_key_settings_logical_id: '逻辑 ID',
@@ -1532,6 +1538,7 @@ const resources = {
         delete: '刪除',
         close: '關閉',
         logout: '登出',
+        login: '登入',
         retry: '重試'
       },
       notification: {
@@ -1984,6 +1991,8 @@ const resources = {
         api_key_settings_title: 'API Key 設定',
         api_key_settings_subtitle: '為已同步的 CPA API Key 設定顯示別名。',
         api_key_settings_empty: '尚無已同步的 CPA API Key。',
+        api_key_settings_search_placeholder: '依別名、金鑰或來源搜尋',
+        api_key_settings_search_empty: '沒有符合的 API Key。',
         api_key_settings_id: '本機 ID',
         api_key_settings_display_key: 'API Key',
         api_key_settings_logical_id: '邏輯 ID',

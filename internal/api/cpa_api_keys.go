@@ -62,6 +62,39 @@ type updateCPAAPIKeyAliasRequest struct {
 	KeyAlias string `json:"keyAlias"`
 }
 
+// registerCPAAPIKeyOptionRoutes 仅暴露筛选用的 id/label 列表，不含 raw key。
+func registerCPAAPIKeyOptionRoutes(router gin.IRoutes, provider service.CPAAPIKeyProvider) {
+	registerCPAAPIKeyOptionRoutesWithLabelMode(router, provider, false)
+}
+
+// registerPublicCPAAPIKeyOptionRoutes uses public-safe labels for anonymous share clients.
+func registerPublicCPAAPIKeyOptionRoutes(router gin.IRoutes, provider service.CPAAPIKeyProvider) {
+	registerCPAAPIKeyOptionRoutesWithLabelMode(router, provider, true)
+}
+
+func registerCPAAPIKeyOptionRoutesWithLabelMode(router gin.IRoutes, provider service.CPAAPIKeyProvider, publicSafeLabels bool) {
+	router.GET("/usage/api-keys/options", func(c *gin.Context) {
+		if provider == nil {
+			c.JSON(http.StatusOK, cpaAPIKeyOptionsResponse{Options: []cpaAPIKeyOption{}})
+			return
+		}
+		rows, err := provider.ListCPAAPIKeys(c.Request.Context())
+		if err != nil {
+			writeInternalError(c, "list api key options failed", err)
+			return
+		}
+		response := make([]cpaAPIKeyOption, 0, len(rows))
+		for _, row := range rows {
+			if publicSafeLabels {
+				response = append(response, toPublicCPAAPIKeyOption(row))
+				continue
+			}
+			response = append(response, toCPAAPIKeyOption(row))
+		}
+		c.JSON(http.StatusOK, cpaAPIKeyOptionsResponse{Options: response})
+	})
+}
+
 func registerCPAAPIKeyRoutes(router gin.IRoutes, provider service.CPAAPIKeyProvider) {
 	router.GET("/usage/api-keys", func(c *gin.Context) {
 		rows, err := listCPAAPIKeyRows(c, provider)
@@ -79,13 +112,7 @@ func registerCPAAPIKeyRoutes(router gin.IRoutes, provider service.CPAAPIKeyProvi
 		c.JSON(http.StatusOK, cpaAPIKeySettingsListResponse{Items: rows})
 	})
 
-	router.GET("/usage/api-keys/options", func(c *gin.Context) {
-		rows, err := listCPAAPIKeyOptionRows(c, provider)
-		if err != nil {
-			return
-		}
-		c.JSON(http.StatusOK, cpaAPIKeyOptionsResponse{Options: rows})
-	})
+	registerCPAAPIKeyOptionRoutes(router, provider)
 
 	router.PATCH("/usage/api-keys/:id", func(c *gin.Context) {
 		if provider == nil {
@@ -156,22 +183,6 @@ func listCPAAPIKeySettingsRows(c *gin.Context, provider service.CPAAPIKeyProvide
 	return response, nil
 }
 
-func listCPAAPIKeyOptionRows(c *gin.Context, provider service.CPAAPIKeyProvider) ([]cpaAPIKeyOption, error) {
-	if provider == nil {
-		return []cpaAPIKeyOption{}, nil
-	}
-	rows, err := provider.ListCPAAPIKeys(c.Request.Context())
-	if err != nil {
-		writeInternalError(c, "list api key options failed", err)
-		return nil, err
-	}
-	response := make([]cpaAPIKeyOption, 0, len(rows))
-	for _, row := range rows {
-		response = append(response, toCPAAPIKeyOption(row))
-	}
-	return response, nil
-}
-
 func toCPAAPIKeyResponse(row entities.CPAAPIKey) cpaAPIKeyResponse {
 	label := helper.CPAAPIKeyDisplayName(row)
 	var lastSyncedAt *string
@@ -214,6 +225,15 @@ func toCPAAPIKeyOption(row entities.CPAAPIKey) cpaAPIKeyOption {
 	return cpaAPIKeyOption{
 		ID:      strconv.FormatInt(row.ID, 10),
 		Label:   label,
+		Source:  cpaAPIKeySourceForResponse(row),
+		Enabled: cpaAPIKeyEnabledForResponse(row),
+	}
+}
+
+func toPublicCPAAPIKeyOption(row entities.CPAAPIKey) cpaAPIKeyOption {
+	return cpaAPIKeyOption{
+		ID:      strconv.FormatInt(row.ID, 10),
+		Label:   helper.CPAAPIKeyPublicDisplayName(row),
 		Source:  cpaAPIKeySourceForResponse(row),
 		Enabled: cpaAPIKeyEnabledForResponse(row),
 	}

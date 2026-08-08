@@ -23,7 +23,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const appBasePathPlaceholder = "__APP_BASE_PATH__"
+const (
+	appBasePathPlaceholder = "__APP_BASE_PATH__"
+	// Quoted token in index.html: window.__SHARE_PUBLIC_ENABLED__ = "__SHARE_PUBLIC_BOOL__" === "true"
+	appSharePublicBoolPlaceholder = `"__SHARE_PUBLIC_BOOL__"`
+)
 
 var loopbackTrustedProxyCIDRs = []string{"127.0.0.1/32", "::1/128"}
 
@@ -49,14 +53,15 @@ type StatusRouteConfig struct {
 }
 
 type OptionalProviders struct {
-	UsageIdentity service.UsageIdentityProvider
-	Quota         QuotaProvider
-	CPAAPIKeys    service.CPAAPIKeyProvider
-	AuthFiles     service.AuthFilesManagementProvider
-	RequestLogs   service.RequestLogProvider
-	Ranking       rankinghttpapi.Provider
-	LocalRanking  rankinghttpapi.LocalProvider
-	Status        StatusRouteConfig
+	UsageIdentity      service.UsageIdentityProvider
+	Quota              QuotaProvider
+	CPAAPIKeys         service.CPAAPIKeyProvider
+	AuthFiles          service.AuthFilesManagementProvider
+	RequestLogs        service.RequestLogProvider
+	Ranking            rankinghttpapi.Provider
+	LocalRanking       rankinghttpapi.LocalProvider
+	Status             StatusRouteConfig
+	SharePublicEnabled bool
 }
 
 func NewRouter(
@@ -100,6 +105,7 @@ func NewRouter(
 	var rankingProvider rankinghttpapi.Provider
 	var localRankingProvider rankinghttpapi.LocalProvider
 	var statusConfig StatusRouteConfig
+	sharePublicEnabled := false
 	if len(optionalProviders) > 0 {
 		usageIdentityProvider = optionalProviders[0].UsageIdentity
 		quotaProvider = optionalProviders[0].Quota
@@ -109,11 +115,26 @@ func NewRouter(
 		rankingProvider = optionalProviders[0].Ranking
 		localRankingProvider = optionalProviders[0].LocalRanking
 		statusConfig = optionalProviders[0].Status
+		sharePublicEnabled = optionalProviders[0].SharePublicEnabled
 	}
 	authHandler.setCPAAPIKeyProvider(cpaAPIKeyProvider)
 	requestLogDownloadTokens := newRequestLogDownloadTokenStore()
 
 	registerUsageEventRequestLogDownloadTokenRoutes(apiV1, requestLogProvider, requestLogDownloadTokens, statusConfig.CPARequestLogAccessEnabled)
+
+	// 公开只读面：默认开启（SHARE_PUBLIC_ENABLED，可关）；关闭时不注册路由。
+	if sharePublicEnabled {
+		publicRead := apiV1.Group("/public")
+		publicLimiter := newPublicReadRateLimiter()
+		publicRead.Use(publicReadNoStoreMiddleware(), publicLimiter.Middleware())
+		registerPublicUsageOverviewRoute(publicRead, usageProvider, cpaAPIKeyProvider)
+		registerUsageActivityRoute(publicRead, usageProvider)
+		registerPublicUsageAnalysisRoute(publicRead, usageProvider, cpaAPIKeyProvider)
+		registerPublicCPAAPIKeyOptionRoutes(publicRead, cpaAPIKeyProvider)
+		if localRankingProvider != nil {
+			rankinghttpapi.RegisterLocalLeaderboardReadRoutes(publicRead, localRankingProvider)
+		}
+	}
 
 	versionProtected := apiV1.Group("")
 	versionProtected.Use(authHandler.roleMiddleware(auth.RoleAdmin, auth.RoleAPIKeyViewer))
@@ -150,7 +171,7 @@ func NewRouter(
 			_ = indexFile.Close()
 			httpFS := http.FS(staticFS)
 			serveIndex := func(c *gin.Context) {
-				indexHTML, err := renderIndexHTML(staticFS, basePath)
+				indexHTML, err := renderIndexHTML(staticFS, basePath, sharePublicEnabled)
 				if err != nil {
 					c.Status(http.StatusNotFound)
 					return
@@ -242,7 +263,7 @@ func setFrameAncestorsCSP(c *gin.Context, origins []string) {
 	c.Header("Content-Security-Policy", strings.Join(values, " "))
 }
 
-func renderIndexHTML(staticFS fs.FS, basePath string) ([]byte, error) {
+func renderIndexHTML(staticFS fs.FS, basePath string, sharePublicEnabled bool) ([]byte, error) {
 	indexFile, err := staticFS.Open("index.html")
 	if err != nil {
 		return nil, err
@@ -253,11 +274,17 @@ func renderIndexHTML(staticFS fs.FS, basePath string) ([]byte, error) {
 		return nil, err
 	}
 
-	return bytes.ReplaceAll(
+	indexHTML = bytes.ReplaceAll(
 		indexHTML,
 		[]byte(strconv.Quote(appBasePathPlaceholder)),
 		[]byte(strconv.Quote(basePath)),
-	), nil
+	)
+	enabledToken := `"false"`
+	if sharePublicEnabled {
+		enabledToken = `"true"`
+	}
+	indexHTML = bytes.ReplaceAll(indexHTML, []byte(appSharePublicBoolPlaceholder), []byte(enabledToken))
+	return indexHTML, nil
 }
 
 func cleanURLPath(requestPath string) string {

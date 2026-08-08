@@ -19,13 +19,15 @@ describe('ranking scope persistence', () => {
     expect(normalizeRankingScope('unexpected')).toBeNull();
   });
 
-  it('defaults to community and ignores unavailable storage', () => {
-    expect(loadRankingScope(undefined)).toBe(DEFAULT_RANKING_SCOPE);
-    expect(loadRankingScope(createStorage('broken'))).toBe('community');
+  it('always loads local ranking while community scope is hidden', () => {
+    expect(DEFAULT_RANKING_SCOPE).toBe('local');
+    expect(loadRankingScope(undefined)).toBe('local');
+    expect(loadRankingScope(createStorage('community'))).toBe('local');
+    expect(loadRankingScope(createStorage('broken'))).toBe('local');
     expect(loadRankingScope({
       getItem: () => { throw new Error('blocked'); },
       setItem: vi.fn(),
-    })).toBe('community');
+    })).toBe('local');
   });
 
   it('stores the last explicit selection without failing the page', () => {

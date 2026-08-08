@@ -24,7 +24,7 @@ const formatDuration = (milliseconds: number): string => {
 export const formatLeaderboardValue = (
   metric: RankingMetric,
   entry: RankingLeaderboardEntry,
-  scope: RankingScope = 'community',
+  scope: RankingScope = 'local',
 ): string => {
   if (metric === 'cache_read_rate') {
     const percent = entry.rate_denominator && entry.rate_denominator > 0

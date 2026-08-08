@@ -192,7 +192,7 @@ func registerUsageEventsRoute(
 			return
 		}
 		resolver := newUsageIdentityResolver(identities)
-		apiKeyInfos, err := loadCPAAPIKeyInfos(c, cpaAPIKeyProvider)
+		apiKeyInfos, err := loadCPAAPIKeyInfos(c, cpaAPIKeyProvider, false)
 		if err != nil {
 			return
 		}
@@ -291,7 +291,7 @@ func registerUsageEventsRoute(
 			return
 		}
 		resolver := newUsageIdentityResolver(identities)
-		apiKeyInfos, err := loadCPAAPIKeyInfos(c, cpaAPIKeyProvider)
+		apiKeyInfos, err := loadCPAAPIKeyInfos(c, cpaAPIKeyProvider, false)
 		if err != nil {
 			return
 		}

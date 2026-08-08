@@ -124,13 +124,14 @@ describe('UsagePage toolbar styles', () => {
     expect(analysisChartSurface).toContain('border-radius: $radius-lg;')
   })
 
-  it('keeps only the ranking source switch beside Refresh in the shared top toolbar', () => {
+  it('keeps Refresh in the shared top toolbar without a ranking scope switch', () => {
     expect(usagePageSource).not.toContain("import { RankingToolbar }")
     expect(usagePageSource).not.toContain('<RankingToolbar')
     expect(usagePageStyles).not.toContain('.rankingToolbarSlot')
-    expect(usagePageSource).toContain("import { RankingScopeSwitch }")
-    expect(usagePageSource).toContain('<RankingScopeSwitch')
-    expect(usagePageSource).toContain('showRankingScopeControl ? styles.rankingScopeTransitionOpen')
+    expect(usagePageSource).not.toContain("import { RankingScopeSwitch }")
+    expect(usagePageSource).not.toContain('<RankingScopeSwitch')
+    expect(usagePageSource).not.toContain('showRankingScopeControl')
+    expect(usagePageSource).toContain("const RANKING_SCOPE: RankingScope = 'local'")
     expect(usagePageSource).not.toContain('buildLocalRankingPreviewLeaderboard')
     expect(usagePageSource).not.toContain('RANKING_PREVIEW_ENABLED')
     expect(usagePageSource).toContain("import { MainActionButton } from '@/components/ui/MainActionButton'")
@@ -664,7 +665,7 @@ describe('UsagePage toolbar styles', () => {
     expect(i18nSource).not.toContain('overview_realtime_latency_p95')
   })
 
-  it('crossfades normal filters and ranking scope in one stable slot while Refresh stays fixed', () => {
+  it('crossfades normal filters in one stable slot while Refresh stays fixed', () => {
     expect(usagePageSource).toContain("${!isEmbeddedInCPAMC ? styles.toolbarActionsRightAnimated : ''}")
     expect(usagePageSource).toContain('{(!isEmbeddedInCPAMC || showRangeControls) && (')
     expect(usagePageSource).not.toContain("activeTab !== 'ranking' &&")
@@ -674,7 +675,8 @@ describe('UsagePage toolbar styles', () => {
     expect(usagePageSource).not.toContain("key={showRangeControls ? 'open' : 'closed'}")
     expect(usagePageSource).toContain('className={styles.usageRefreshSlot}')
     expect(usagePageSource).toContain('styles.toolbarContextSlotImmediate : styles.toolbarContextSlot')
-    expect(usagePageSource).toContain('styles.rankingScopeTransition')
+    expect(usagePageSource).not.toContain('styles.rankingScopeTransition')
+    expect(usagePageSource).not.toContain('<RankingScopeSwitch')
     expect(usagePageStyles).toMatch(/\.toolbarActionsRightAnimated\s*\{[\s\S]*?display:\s*grid;/)
     expect(usagePageStyles).toMatch(/\.toolbarActionsRightAnimated\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto;/)
     expect(usagePageStyles).toMatch(/\.toolbarContextSlot\s*\{[\s\S]*?display:\s*grid;/)
@@ -690,7 +692,6 @@ describe('UsagePage toolbar styles', () => {
     expect(contextTransitionInner).toContain('overflow: hidden;')
     expect(contextTransitionInner).toContain('width: max-content;')
     expect(usagePageStyles).toMatch(/\.usageRefreshSlot\s*\{[\s\S]*?flex:\s*0 0 auto;/)
-    expect(usagePageStyles).toMatch(/\.rankingScopeTransitionOpen\s*\{[\s\S]*?max-width:\s*260px;/)
     expect(usagePageStyles).toMatch(/@include mobile\s*\{[\s\S]*?\.usageFilterTransition,\s*\.usageFilterTransitionInner,[\s\S]*?\.rankingScopeTransitionInner\s*\{[\s\S]*?width:\s*100%;/)
     expect(usagePageStyles).toMatch(/@include mobile\s*\{[\s\S]*?\.usageFilterTransitionOpen\s*\{[\s\S]*?max-width:\s*100%;/)
   })
@@ -806,7 +807,9 @@ describe('UsagePage toolbar styles', () => {
     expect(usagePageSource.indexOf("t('usage_stats.check_updates')")).toBeLessThan(usagePageSource.indexOf("t('common.logout')"))
     expect(usagePageSource.match(/<MainActionButton/g)).toHaveLength(2)
     expect(keyOverviewPageSource.match(/<MainActionButton/g)).toHaveLength(2)
-    expect(usagePageSource).toContain("aria-label={t('common.logout')}")
+    // Share mode swaps the same button to login; admin mode keeps logout.
+    expect(usagePageSource).toContain("aria-label={shareMode ? t('common.login') : t('common.logout')}")
+    expect(usagePageSource).toContain("shareMode ? t('common.login') : t('common.logout')")
     expect(keyOverviewPageSource).toContain("aria-label={t('common.logout')}")
     expect(usagePageSource).not.toContain('styles.signOutPill')
     expect(keyOverviewPageSource).not.toContain('styles.logoutPill')

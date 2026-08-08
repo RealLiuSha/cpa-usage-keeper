@@ -1,6 +1,7 @@
 import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
 import { isCPAMCEmbed } from '@/embed/cpamcEmbed'
 import { resolveUsageRequestRange } from '@/utils/usage/rangeQuery'
+import { isActiveShareLocation } from './shareMode'
 
 export class ApiError extends Error {
   status: number
@@ -23,6 +24,8 @@ const EMBED_SESSION_HEADER = 'X-CPA-Usage-Keeper-Embed-Session'
 declare global {
   interface Window {
     __APP_BASE_PATH__?: string
+    /** Injected by server from SHARE_PUBLIC_ENABLED; JS boolean true/false. */
+    __SHARE_PUBLIC_ENABLED__?: boolean
   }
 }
 
@@ -108,9 +111,39 @@ export function appPath(path: string): string {
   return `${normalizeBasePath(window.__APP_BASE_PATH__)}${normalizedPath}`
 }
 
+/** Pathname only — ranking helpers pass `?period=&metric=` inside the path arg. */
+const sharePublicAPIPathname = (normalizedPath: string): string => {
+  const withoutHash = normalizedPath.split('#', 1)[0] ?? normalizedPath
+  return withoutHash.split('?', 1)[0] ?? withoutHash
+}
+
+const isSharePublicAPIPath = (normalizedPath: string): boolean => {
+  const pathname = sharePublicAPIPathname(normalizedPath)
+  return pathname === '/usage/overview'
+    || pathname.startsWith('/usage/overview/')
+    || pathname === '/usage/activity'
+    || pathname.startsWith('/usage/activity/')
+    || pathname === '/usage/analysis'
+    || pathname.startsWith('/usage/analysis/')
+    || pathname === '/usage/api-keys/options'
+    || pathname === '/ranking/local/leaderboards'
+}
+
+/**
+ * Share public routing is derived from location + server-injected feature flag.
+ * No mutable module flag: avoids StrictMode cleanup races (M1).
+ */
+export function isSharePublicAPIEnabled(): boolean {
+  return isActiveShareLocation()
+}
+
 export function apiPath(path: string): string {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
-  return `${normalizeBasePath(window.__APP_BASE_PATH__)}/api/v1${normalizedPath}`
+  const base = normalizeBasePath(window.__APP_BASE_PATH__)
+  if (isActiveShareLocation() && isSharePublicAPIPath(normalizedPath)) {
+    return `${base}/api/v1/public${normalizedPath}`
+  }
+  return `${base}/api/v1${normalizedPath}`
 }
 
 async function parseApiError(response: Response, fallback: string): Promise<never> {

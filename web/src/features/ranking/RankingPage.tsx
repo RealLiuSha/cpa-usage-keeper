@@ -63,6 +63,8 @@ export interface RankingPageProps {
   leaderboardError: unknown;
   action: RankingAction;
   actionError: unknown;
+  /** Share/anonymous mode: hide local profile edit entry points (H2). */
+  readOnly?: boolean;
   onClearActionError: () => void;
   onJoin: (profile: RankingProfileRequest) => Promise<unknown>;
   onSync: AsyncAction;
@@ -369,6 +371,7 @@ export function RankingPage(props: RankingPageProps) {
         onPeriodChange={props.onPeriodChange}
         onMetricChange={props.onMetricChange}
         scope={props.scope}
+        readOnly={props.readOnly}
         t={t}
         language={i18n.language}
       />
@@ -683,6 +686,7 @@ interface LeaderboardCardProps {
   onEditLocalProfile: (entry: RankingLeaderboardEntry) => void;
   onPeriodChange: (period: RankingPeriod) => void;
   onMetricChange: (metric: RankingMetric) => void;
+  readOnly?: boolean;
   t: Translate;
   language: string;
 }
@@ -707,6 +711,7 @@ function LeaderboardCard({
   onEditLocalProfile,
   onPeriodChange,
   onMetricChange,
+  readOnly,
   t,
   language,
 }: LeaderboardCardProps) {
@@ -835,6 +840,7 @@ function LeaderboardCard({
                 position={index + 1}
                 metric={metric}
                 scope={scope}
+                readOnly={readOnly}
                 onEditLocalProfile={onEditLocalProfile}
                 t={t}
               />
@@ -869,6 +875,7 @@ function LeaderboardCard({
                             entry={entry}
                             scope={scope}
                             className={styles.tableAvatar}
+                            readOnly={readOnly}
                             onEditLocalProfile={onEditLocalProfile}
                             t={t}
                           />
@@ -895,11 +902,12 @@ function LeaderboardCard({
   );
 }
 
-function PodiumCard({ entry, position, metric, scope, onEditLocalProfile, t }: {
+function PodiumCard({ entry, position, metric, scope, readOnly, onEditLocalProfile, t }: {
   entry: RankingLeaderboardEntry;
   position: number;
   metric: RankingMetric;
   scope: RankingScope;
+  readOnly?: boolean;
   onEditLocalProfile: (entry: RankingLeaderboardEntry) => void;
   t: Translate;
 }) {
@@ -923,6 +931,7 @@ function PodiumCard({ entry, position, metric, scope, onEditLocalProfile, t }: {
         entry={entry}
         scope={scope}
         className={styles.podiumAvatar}
+        readOnly={readOnly}
         onEditLocalProfile={onEditLocalProfile}
         t={t}
       />
@@ -932,14 +941,15 @@ function PodiumCard({ entry, position, metric, scope, onEditLocalProfile, t }: {
   );
 }
 
-function LeaderboardEntryAvatar({ entry, scope, className, onEditLocalProfile, t }: {
+function LeaderboardEntryAvatar({ entry, scope, className, readOnly, onEditLocalProfile, t }: {
   entry: RankingLeaderboardEntry;
   scope: RankingScope;
   className: string;
+  readOnly?: boolean;
   onEditLocalProfile: (entry: RankingLeaderboardEntry) => void;
   t: Translate;
 }) {
-  if (scope !== 'local') {
+  if (scope !== 'local' || readOnly) {
     return <RankingAvatar avatarID={entry.avatar_id} name={entry.display_name} className={className} decorative />;
   }
   return (

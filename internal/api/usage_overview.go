@@ -238,6 +238,19 @@ func registerKeyOverviewRoute(router gin.IRoutes, usageProvider service.UsagePro
 }
 
 func registerUsageOverviewRoute(router gin.IRoutes, usageProvider service.UsageProvider, cpaAPIKeyProvider service.CPAAPIKeyProvider) {
+	registerUsageOverviewRouteWithLabelMode(router, usageProvider, cpaAPIKeyProvider, false)
+}
+
+func registerPublicUsageOverviewRoute(router gin.IRoutes, usageProvider service.UsageProvider, cpaAPIKeyProvider service.CPAAPIKeyProvider) {
+	registerUsageOverviewRouteWithLabelMode(router, usageProvider, cpaAPIKeyProvider, true)
+}
+
+func registerUsageOverviewRouteWithLabelMode(
+	router gin.IRoutes,
+	usageProvider service.UsageProvider,
+	cpaAPIKeyProvider service.CPAAPIKeyProvider,
+	publicSafeLabels bool,
+) {
 	router.GET("/usage/overview", func(c *gin.Context) {
 		if usageProvider == nil {
 			writeUsageOverviewResponse(c, usageProvider, servicedto.UsageFilter{})
@@ -256,7 +269,7 @@ func registerUsageOverviewRoute(router gin.IRoutes, usageProvider service.UsageP
 			writeUsageFilterParseError(c, err)
 			return
 		}
-		writeUsageOverviewRealtimeResponse(c, usageProvider, cpaAPIKeyProvider, filter)
+		writeUsageOverviewRealtimeResponse(c, usageProvider, cpaAPIKeyProvider, filter, publicSafeLabels)
 	})
 }
 
@@ -289,7 +302,13 @@ func writeUsageOverviewResponse(c *gin.Context, usageProvider service.UsageProvi
 	})
 }
 
-func writeUsageOverviewRealtimeResponse(c *gin.Context, usageProvider service.UsageProvider, cpaAPIKeyProvider service.CPAAPIKeyProvider, filter servicedto.UsageFilter) {
+func writeUsageOverviewRealtimeResponse(
+	c *gin.Context,
+	usageProvider service.UsageProvider,
+	cpaAPIKeyProvider service.CPAAPIKeyProvider,
+	filter servicedto.UsageFilter,
+	publicSafeLabels bool,
+) {
 	if usageProvider == nil {
 		c.JSON(http.StatusOK, emptyUsageOverviewRealtime(filter.RealtimeWindow))
 		return
@@ -299,7 +318,7 @@ func writeUsageOverviewRealtimeResponse(c *gin.Context, usageProvider service.Us
 		writeUsageProviderError(c, "get usage overview realtime failed", err)
 		return
 	}
-	apiKeyInfos, err := loadCPAAPIKeyInfos(c, cpaAPIKeyProvider)
+	apiKeyInfos, err := loadCPAAPIKeyInfos(c, cpaAPIKeyProvider, publicSafeLabels)
 	if err != nil {
 		return
 	}
