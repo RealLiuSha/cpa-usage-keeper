@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"cpa-usage-keeper/internal/entities"
-	"cpa-usage-keeper/internal/helper"
 	"cpa-usage-keeper/internal/service"
 )
 
@@ -333,13 +332,15 @@ func TestUsageIdentitiesPageRouteReturnsCredentialHealthSnapshot(t *testing.T) {
 			Provider:     "Claude Team",
 		}},
 		pagedHealth: []service.UsageCredentialHealthSnapshot{{
-			WindowSeconds: 5 * 60 * 60,
-			BucketSeconds: 10 * 60,
-			WindowStart:   windowStart,
-			WindowEnd:     windowEnd,
-			TotalSuccess:  2,
-			TotalFailure:  1,
-			SuccessRate:   66.6666666667,
+			WindowSeconds:   5 * 60 * 60,
+			BucketSeconds:   10 * 60,
+			WindowStart:     windowStart,
+			WindowEnd:       windowEnd,
+			TotalSuccess:    2,
+			TotalFailure:    1,
+			SuccessRate:     66.6666666667,
+			InputTokens:     400,
+			CacheReadTokens: 250,
 			Buckets: []service.UsageCredentialHealthBucket{{
 				StartTime: bucketStart,
 				EndTime:   bucketStart.Add(10 * time.Minute),
@@ -367,6 +368,8 @@ func TestUsageIdentitiesPageRouteReturnsCredentialHealthSnapshot(t *testing.T) {
 		`"total_success":2`,
 		`"total_failure":1`,
 		`"success_rate":66.6666666667`,
+		`"input_tokens":400`,
+		`"cache_read_tokens":250`,
 		`"buckets":[{"start_time":"2026-06-15T12:40:00Z","end_time":"2026-06-15T12:50:00Z","success":2,"failure":1,"rate":0.6666666667}]`,
 	} {
 		if !contains(body, expected) {
@@ -403,11 +406,11 @@ func TestUsageIdentitiesRouteReturnsProviderDisplayName(t *testing.T) {
 	}
 }
 
-func TestUsageIdentitiesRouteMasksAIProviderIdentity(t *testing.T) {
-	rawLookupKey := "sk-live-secret-value"
-	maskedLookupKey := helper.RedactSensitiveValue(rawLookupKey)
+func TestUsageIdentitiesRoutePublishesAIProviderAuthIndexWithoutLookupKey(t *testing.T) {
+	authIndex := "provider-auth-index"
+	lookupKey := "sk-live-secret-value"
 	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{UsageIdentity: usageIdentitiesStub{items: []entities.UsageIdentity{
-		{ID: 1, Name: "Provider Name", Prefix: "Team Prefix", AuthType: entities.UsageIdentityAuthTypeAIProvider, AuthTypeName: "apikey", Identity: rawLookupKey, Type: "openai", Provider: "OpenAI"},
+		{ID: 1, Name: "Provider Name", Prefix: "Team Prefix", AuthType: entities.UsageIdentityAuthTypeAIProvider, AuthTypeName: "apikey", Identity: authIndex, LookupKey: lookupKey, Type: "openai", Provider: "OpenAI"},
 	}}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/usage/identities", nil)
 	resp := httptest.NewRecorder()
@@ -418,11 +421,11 @@ func TestUsageIdentitiesRouteMasksAIProviderIdentity(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", resp.Code, body)
 	}
-	if contains(body, rawLookupKey) {
-		t.Fatalf("expected raw AI provider lookup key to be hidden, got %s", body)
+	if contains(body, lookupKey) {
+		t.Fatalf("expected AI provider lookup key to stay hidden, got %s", body)
 	}
-	if !contains(body, `"identity":"`+maskedLookupKey+`"`) {
-		t.Fatalf("expected masked AI provider identity %q in response body: %s", maskedLookupKey, body)
+	if !contains(body, `"identity":"`+authIndex+`"`) {
+		t.Fatalf("expected AI provider auth-index %q in response body: %s", authIndex, body)
 	}
 	if !contains(body, `"name":"Provider Name"`) || !contains(body, `"provider":"OpenAI"`) || !contains(body, `"displayName":"Team Prefix"`) {
 		t.Fatalf("expected AI provider display fields to use usage_identities values directly, got %s", body)

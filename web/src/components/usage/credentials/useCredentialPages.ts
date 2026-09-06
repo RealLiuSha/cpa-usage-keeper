@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, fetchUsageIdentitiesPage, type UsageIdentityPageSort } from '@/lib/api'
 import type { UsageIdentity, UsageIdentityTypeCount } from '@/lib/types'
 import { credentialProviderFilterTypes, type CredentialProviderFilterKey } from './credentialProviderFilters'
-import { CREDENTIALS_PAGE_SIZE } from './credentialViewModels'
+import { loadCredentialListPreferences, persistCredentialListPreferences } from './credentialListPreferences'
 
 interface UseCredentialPagesOptions {
   enabledAuthFiles: boolean
@@ -13,6 +13,7 @@ interface UseCredentialPagesOptions {
 export const CREDENTIAL_PAGES_REFRESH_INTERVAL_MS = 60 * 1000
 
 const AUTH_FILE_ACTIVE_ONLY_STORAGE_KEY = 'cpa-usage-keeper-auth-files-active-only'
+const AI_PROVIDER_ACTIVE_ONLY_STORAGE_KEY = 'cpa-usage-keeper-ai-providers-active-only'
 
 export function mergeUsageIdentityAliasUpdate(current: UsageIdentity, updated: UsageIdentity): UsageIdentity {
   return {
@@ -26,6 +27,16 @@ const getInitialAuthFileActiveOnly = () => {
   if (typeof window === 'undefined') return false
   return window.localStorage.getItem(AUTH_FILE_ACTIVE_ONLY_STORAGE_KEY) === 'true'
 }
+
+const getInitialAiProviderActiveOnly = () => {
+  if (typeof window === 'undefined') return false
+  return window.localStorage.getItem(AI_PROVIDER_ACTIVE_ONLY_STORAGE_KEY) === 'true'
+}
+
+const getInitialListPreferences = () => ({
+  authFile: loadCredentialListPreferences('auth-files'),
+  aiProvider: loadCredentialListPreferences('ai-provider'),
+})
 
 export interface CredentialPagesState {
   authFileIdentities: UsageIdentity[]
@@ -41,6 +52,7 @@ export interface CredentialPagesState {
   authFilePageSize: number
   aiProviderPageSize: number
   authFileActiveOnly: boolean
+  aiProviderActiveOnly: boolean
   authFileProviderFilter: CredentialProviderFilterKey
   aiProviderProviderFilter: CredentialProviderFilterKey
   authFileSort: UsageIdentityPageSort
@@ -50,6 +62,7 @@ export interface CredentialPagesState {
   setAuthFilePageSize: (pageSize: number) => void
   setAiProviderPageSize: (pageSize: number) => void
   setAuthFileActiveOnly: (activeOnly: boolean) => void
+  setAiProviderActiveOnly: (activeOnly: boolean) => void
   setAuthFileProviderFilter: (filter: CredentialProviderFilterKey) => void
   setAiProviderProviderFilter: (filter: CredentialProviderFilterKey) => void
   setAuthFileSort: (sort: UsageIdentityPageSort) => void
@@ -73,13 +86,16 @@ export function useCredentialPages({ enabledAuthFiles, enabledAiProviders, onAut
   const [aiProvidersError, setAiProvidersError] = useState('')
   const [authFilePage, setAuthFilePage] = useState(1)
   const [aiProviderPage, setAiProviderPage] = useState(1)
-  const [authFilePageSize, setAuthFilePageSizeState] = useState(CREDENTIALS_PAGE_SIZE)
-  const [aiProviderPageSize, setAiProviderPageSizeState] = useState(CREDENTIALS_PAGE_SIZE)
+  // 排序/每页条数/供应商筛选在挂载时一次性读回，避免每个字段各查一次 localStorage。
+  const [initialListPreferences] = useState(getInitialListPreferences)
+  const [authFilePageSize, setAuthFilePageSizeState] = useState(initialListPreferences.authFile.pageSize)
+  const [aiProviderPageSize, setAiProviderPageSizeState] = useState(initialListPreferences.aiProvider.pageSize)
   const [authFileActiveOnly, setAuthFileActiveOnlyState] = useState(getInitialAuthFileActiveOnly)
-  const [authFileProviderFilter, setAuthFileProviderFilterState] = useState<CredentialProviderFilterKey>('all')
-  const [aiProviderProviderFilter, setAiProviderProviderFilterState] = useState<CredentialProviderFilterKey>('all')
-  const [authFileSort, setAuthFileSortState] = useState<UsageIdentityPageSort>('priority')
-  const [aiProviderSort, setAiProviderSortState] = useState<UsageIdentityPageSort>('total_requests')
+  const [aiProviderActiveOnly, setAiProviderActiveOnlyState] = useState(getInitialAiProviderActiveOnly)
+  const [authFileProviderFilter, setAuthFileProviderFilterState] = useState<CredentialProviderFilterKey>(initialListPreferences.authFile.providerFilter)
+  const [aiProviderProviderFilter, setAiProviderProviderFilterState] = useState<CredentialProviderFilterKey>(initialListPreferences.aiProvider.providerFilter)
+  const [authFileSort, setAuthFileSortState] = useState<UsageIdentityPageSort>(initialListPreferences.authFile.sort)
+  const [aiProviderSort, setAiProviderSortState] = useState<UsageIdentityPageSort>(initialListPreferences.aiProvider.sort)
   const [authFilesLoading, setAuthFilesLoading] = useState(false)
   const [aiProvidersLoading, setAiProvidersLoading] = useState(false)
   const authFilesRequestControllerRef = useRef<AbortController | null>(null)
@@ -88,10 +104,12 @@ export function useCredentialPages({ enabledAuthFiles, enabledAiProviders, onAut
   const setAuthFilePageSize = useCallback((pageSize: number) => {
     setAuthFilePage(1)
     setAuthFilePageSizeState(pageSize)
+    persistCredentialListPreferences('auth-files', { pageSize })
   }, [])
   const setAiProviderPageSize = useCallback((pageSize: number) => {
     setAiProviderPage(1)
     setAiProviderPageSizeState(pageSize)
+    persistCredentialListPreferences('ai-provider', { pageSize })
   }, [])
   const setAuthFileActiveOnly = useCallback((activeOnly: boolean) => {
     setAuthFilePage(1)
@@ -100,21 +118,32 @@ export function useCredentialPages({ enabledAuthFiles, enabledAiProviders, onAut
       window.localStorage.setItem(AUTH_FILE_ACTIVE_ONLY_STORAGE_KEY, String(activeOnly))
     }
   }, [])
+  const setAiProviderActiveOnly = useCallback((activeOnly: boolean) => {
+    setAiProviderPage(1)
+    setAiProviderActiveOnlyState(activeOnly)
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(AI_PROVIDER_ACTIVE_ONLY_STORAGE_KEY, String(activeOnly))
+    }
+  }, [])
   const setAuthFileProviderFilter = useCallback((filter: CredentialProviderFilterKey) => {
     setAuthFilePage(1)
     setAuthFileProviderFilterState(filter)
+    persistCredentialListPreferences('auth-files', { providerFilter: filter })
   }, [])
   const setAiProviderProviderFilter = useCallback((filter: CredentialProviderFilterKey) => {
     setAiProviderPage(1)
     setAiProviderProviderFilterState(filter)
+    persistCredentialListPreferences('ai-provider', { providerFilter: filter })
   }, [])
   const setAuthFileSort = useCallback((sort: UsageIdentityPageSort) => {
     setAuthFilePage(1)
     setAuthFileSortState(sort)
+    persistCredentialListPreferences('auth-files', { sort })
   }, [])
   const setAiProviderSort = useCallback((sort: UsageIdentityPageSort) => {
     setAiProviderPage(1)
     setAiProviderSortState(sort)
+    persistCredentialListPreferences('ai-provider', { sort })
   }, [])
   const replaceUsageIdentity = useCallback((identity: UsageIdentity) => {
     const replaceByID = (items: UsageIdentity[]) => items.map((item) => (item.id === identity.id ? mergeUsageIdentityAliasUpdate(item, identity) : item))
@@ -174,7 +203,7 @@ export function useCredentialPages({ enabledAuthFiles, enabledAiProviders, onAut
     setAiProvidersLoading(true)
     setAiProvidersError('')
     try {
-      const response = await fetchUsageIdentitiesPage(controller.signal, { authType: 2, types: credentialProviderFilterTypes('ai-provider', aiProviderProviderFilter), sort: aiProviderSort, page: aiProviderPage, pageSize: aiProviderPageSize })
+      const response = await fetchUsageIdentitiesPage(controller.signal, { authType: 2, activeOnly: aiProviderActiveOnly ? true : undefined, types: credentialProviderFilterTypes('ai-provider', aiProviderProviderFilter), sort: aiProviderSort, page: aiProviderPage, pageSize: aiProviderPageSize })
       if (aiProvidersRequestControllerRef.current !== controller) {
         return
       }
@@ -203,7 +232,7 @@ export function useCredentialPages({ enabledAuthFiles, enabledAiProviders, onAut
         aiProvidersRequestControllerRef.current = null
       }
     }
-  }, [aiProviderPage, aiProviderPageSize, aiProviderProviderFilter, aiProviderSort, onAuthRequired])
+  }, [aiProviderActiveOnly, aiProviderPage, aiProviderPageSize, aiProviderProviderFilter, aiProviderSort, onAuthRequired])
 
   const refresh = useCallback(async () => {
     // 两个凭证页已经拆成独立 tab，手动刷新只触发当前可见列表。
@@ -263,6 +292,7 @@ export function useCredentialPages({ enabledAuthFiles, enabledAiProviders, onAut
     authFilePageSize,
     aiProviderPageSize,
     authFileActiveOnly,
+    aiProviderActiveOnly,
     authFileProviderFilter,
     aiProviderProviderFilter,
     authFileSort,
@@ -272,6 +302,7 @@ export function useCredentialPages({ enabledAuthFiles, enabledAiProviders, onAut
     setAuthFilePageSize,
     setAiProviderPageSize,
     setAuthFileActiveOnly,
+    setAiProviderActiveOnly,
     setAuthFileProviderFilter,
     setAiProviderProviderFilter,
     setAuthFileSort,

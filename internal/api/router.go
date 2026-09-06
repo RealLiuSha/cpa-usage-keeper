@@ -25,7 +25,7 @@ import (
 
 const (
 	appBasePathPlaceholder = "__APP_BASE_PATH__"
-	// Quoted token in index.html: window.__SHARE_PUBLIC_ENABLED__ = "__SHARE_PUBLIC_BOOL__" === "true"
+	// Quoted token assigned to window.__SHARE_PUBLIC_FLAG__ in index.html.
 	appSharePublicBoolPlaceholder = `"__SHARE_PUBLIC_BOOL__"`
 )
 
@@ -36,6 +36,7 @@ type StatusProvider interface {
 }
 
 type QuotaProvider interface {
+	GetCodexQuotaHistory(context.Context, quota.CodexQuotaHistoryRequest) (quota.CodexQuotaHistoryResponse, error)
 	GetCachedQuota(context.Context, quota.CacheRequest) (quota.CacheResponse, error)
 	Refresh(context.Context, quota.RefreshRequest) (quota.RefreshResponse, error)
 	GetRefreshTaskByAuthIndex(context.Context, string) (quota.RefreshTaskResponse, error)
@@ -54,6 +55,7 @@ type StatusRouteConfig struct {
 
 type OptionalProviders struct {
 	UsageIdentity      service.UsageIdentityProvider
+	ErrorEvents        service.ErrorEventProvider
 	Quota              QuotaProvider
 	CPAAPIKeys         service.CPAAPIKeyProvider
 	AuthFiles          service.AuthFilesManagementProvider
@@ -98,6 +100,7 @@ func NewRouter(
 	authHandler.registerRoutes(authGroup)
 
 	var usageIdentityProvider service.UsageIdentityProvider
+	var errorEventProvider service.ErrorEventProvider
 	var quotaProvider QuotaProvider
 	var cpaAPIKeyProvider service.CPAAPIKeyProvider
 	var authFilesProvider service.AuthFilesManagementProvider
@@ -108,6 +111,7 @@ func NewRouter(
 	sharePublicEnabled := false
 	if len(optionalProviders) > 0 {
 		usageIdentityProvider = optionalProviders[0].UsageIdentity
+		errorEventProvider = optionalProviders[0].ErrorEvents
 		quotaProvider = optionalProviders[0].Quota
 		cpaAPIKeyProvider = optionalProviders[0].CPAAPIKeys
 		authFilesProvider = optionalProviders[0].AuthFiles
@@ -149,6 +153,7 @@ func NewRouter(
 	registerUsageAnalysisRoute(adminProtected, usageProvider, cpaAPIKeyProvider)
 	registerUsageEventsRoute(adminProtected, usageProvider, usageIdentityProvider, cpaAPIKeyProvider, requestLogProvider, requestLogDownloadTokens, statusConfig.CPARequestLogAccessEnabled)
 	registerUsageIdentityRoutes(adminProtected, usageIdentityProvider)
+	registerErrorEventRoutes(adminProtected, errorEventProvider)
 	registerAuthFileManagementRoutes(adminProtected, authFilesProvider)
 	registerAuthSessionManagementRoutes(adminProtected, authHandler)
 	registerCPAAPIKeyRoutes(adminProtected, cpaAPIKeyProvider)
@@ -163,8 +168,16 @@ func NewRouter(
 
 	keyViewerProtected := apiV1.Group("")
 	keyViewerProtected.Use(authHandler.apiKeyViewerMiddleware())
-	registerKeyOverviewRoute(keyViewerProtected, usageProvider, cpaAPIKeyProvider, authHandler)
-	registerKeyActivityRoute(keyViewerProtected, usageProvider, cpaAPIKeyProvider, authHandler)
+	keyViewerProtected.Use(authHandler.activeAPIKeyViewerMiddleware())
+	registerKeyOverviewRoute(keyViewerProtected, usageProvider)
+	registerKeyActivityRoute(keyViewerProtected, usageProvider)
+	registerKeyUsageAnalysisRoute(keyViewerProtected, usageProvider)
+	if rankingProvider != nil {
+		rankinghttpapi.RegisterKeyViewerRoutes(keyViewerProtected, rankingProvider)
+	}
+	if authConfig.APIKeyViewerLocalRankingEnabled && localRankingProvider != nil {
+		rankinghttpapi.RegisterKeyViewerLocalRoutes(keyViewerProtected, localRankingProvider)
+	}
 
 	if staticFS != nil {
 		if indexFile, err := staticFS.Open("index.html"); err == nil {

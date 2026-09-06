@@ -1,7 +1,7 @@
 import React, {
   useCallback,
   useEffect,
-  useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -13,15 +13,25 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MainActionButton } from '@/components/ui/MainActionButton';
-import { Modal } from '@/components/ui/Modal';
 import { PortalTooltip, usePortalTooltip } from '@/components/ui/PortalTooltip';
+import { ProviderBrandIcon } from '@/components/ProviderBrandIcon';
 import { Select } from '@/components/ui/Select';
-import { IconCheck, IconChevronDown, IconCopy, IconDownload, IconScrollText, IconSettings } from '@/components/ui/icons';
+import {
+  IconArrowDownToLine,
+  IconArrowUpFromLine,
+  IconBrain,
+  IconChevronDown,
+  IconDatabaseArrowDown,
+  IconDatabaseArrowUp,
+  IconDownload,
+  IconSettings,
+} from '@/components/ui/icons';
 import type { UsageEvent, UsageEventRequestLogResponse, UsageSourceFilterOption } from '@/lib/types';
 import { useScrollBoundaryContainment } from '@/hooks/useScrollBoundaryContainment';
 import {
   calculateCacheReadRate,
   formatDurationMs,
+  formatCompactTokenValue,
   formatUsd,
   LATENCY_SOURCE_FIELD,
   normalizeAuthIndex,
@@ -34,6 +44,10 @@ import {
   type RequestEventColumnId,
 } from './requestEventColumns';
 import { RequestEventsColumnSettingsModal } from './RequestEventsColumnSettingsModal';
+import { RequestEventLogModal } from './RequestEventLogModal';
+import { RequestEventResultBadge } from './RequestEventResultBadge';
+
+export { splitRequestLogVirtualChunks } from './RequestEventLogModal';
 
 export {
   REQUEST_EVENT_COLUMN_IDS,
@@ -44,18 +58,15 @@ export {
 } from './requestEventColumns';
 
 const ALL_FILTER = '__all__';
-const REQUEST_LOG_VIRTUAL_LINE_HEIGHT = 18;
-const REQUEST_LOG_VIRTUAL_OVERSCAN = 8;
-const REQUEST_LOG_VIRTUAL_PADDING_Y = 12;
-const REQUEST_LOG_VIRTUAL_CHUNK_CHARS = 2048;
-const REQUEST_LOG_VIRTUAL_BREAK_LOOKBACK = 256;
-const REQUEST_LOG_GRAPHEME_CONTEXT_CHARS = 64;
+const REQUEST_EVENT_VIRTUALIZATION_THRESHOLD = 50;
+const REQUEST_EVENT_VIRTUAL_ROW_HEIGHT = 70;
+const REQUEST_EVENT_VIRTUAL_OVERSCAN = 8;
+const REQUEST_EVENT_VIRTUAL_INITIAL_VIEWPORT_HEIGHT = 760;
+const REQUEST_EVENT_LOAD_MORE_THRESHOLD_PX = 1200;
 const REQUEST_EVENT_CLIENT_IP_DISPLAY_LENGTH = 39;
 const REQUEST_EVENT_X_FORWARDED_FOR_DISPLAY_LENGTH = 48;
 const REQUEST_EVENT_USER_AGENT_DISPLAY_LENGTH = 48;
-const REQUEST_LOG_GRAPHEME_SEGMENTER = typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
-  ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-  : null;
+const REQUEST_EVENT_INTEGER_FORMATTER = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 
 type SelectOption = { value: string; label: string };
 
@@ -70,6 +81,18 @@ export const shouldCloseMenuOnFocusLeave = (
   container: { contains: (target: EventTarget) => boolean },
   nextFocus: EventTarget | null
 ): boolean => nextFocus === null || !container.contains(nextFocus);
+
+export const shouldLoadMoreRequestEvents = ({
+  scrollTop,
+  clientHeight,
+  scrollHeight,
+  threshold = REQUEST_EVENT_LOAD_MORE_THRESHOLD_PX,
+}: {
+  scrollTop: number;
+  clientHeight: number;
+  scrollHeight: number;
+  threshold?: number;
+}): boolean => scrollHeight > 0 && scrollTop + clientHeight >= scrollHeight - Math.max(threshold, 0);
 
 const appendSelectedOption = (
   options: SelectOption[],
@@ -88,7 +111,8 @@ type RequestEventRow = {
   requestId: string;
   timestamp: string;
   timestampMs: number;
-  timestampLabel: string;
+  timestampTimeLabel: string;
+  timestampDateLabel: string;
   apiKey: string;
   model: string;
   modelAlias: string;
@@ -106,8 +130,11 @@ type RequestEventRow = {
   isDelete: boolean;
   failed: boolean;
   latencyMs: number | null;
+  latencyLabel: string;
   ttftMs: number | null;
+  ttftLabel: string;
   speedTPS: number | null;
+  speedLabel: string;
   clientIP: string;
   xForwardedFor: string;
   userAgent: string;
@@ -117,9 +144,24 @@ type RequestEventRow = {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   totalTokens: number;
+  inputTokensDisplayLabel: string;
+  outputTokensDisplayLabel: string;
+  reasoningTokensDisplayLabel: string;
+  cacheReadTokensDisplayLabel: string;
+  cacheCreationTokensDisplayLabel: string;
+  totalTokensDisplayLabel: string;
+  inputTokensLabel: string;
+  outputTokensLabel: string;
+  reasoningTokensLabel: string;
+  cacheReadTokensLabel: string;
+  cacheCreationTokensLabel: string;
+  totalTokensLabel: string;
   cacheReadRate: string;
   cost: number | null;
   costAvailable: boolean;
+  costLabel: string;
+  pricingStyle: string;
+  executorType: string;
 };
 
 type RequestEventColumnDefinition = {
@@ -129,142 +171,123 @@ type RequestEventColumnDefinition = {
   renderCell: (row: RequestEventRow) => ReactNode;
 };
 
-const REQUEST_LOG_SECTION_TITLE_KEYS: Record<string, string> = {
-  'REQUEST INFO': 'usage_stats.request_events_log_section_request_info',
-  HEADERS: 'usage_stats.request_events_log_section_headers',
-  'API REQUEST': 'usage_stats.request_events_log_section_api_request',
-  'API RESPONSE': 'usage_stats.request_events_log_section_api_response',
-  'API RESPONSE ERROR': 'usage_stats.request_events_log_section_api_response_error',
-  RESPONSE: 'usage_stats.request_events_log_section_response',
-  'WEBSOCKET TIMELINE': 'usage_stats.request_events_log_section_websocket_timeline',
-  'API WEBSOCKET TIMELINE': 'usage_stats.request_events_log_section_api_websocket_timeline',
-  'RAW LOG': 'usage_stats.request_events_log_section_raw_log',
+type RequestEventTableRowProps = {
+  row: RequestEventRow;
+  columns: readonly RequestEventColumnDefinition[];
+  virtualIndex?: number;
+  measureElement?: (node: HTMLTableRowElement | null) => void;
 };
 
-const formatRequestLogSectionTitle = (
-  title: string,
-  translate: (key: string) => string
-) => {
-  const normalizedTitle = title.trim().toUpperCase();
-  const translationKey = REQUEST_LOG_SECTION_TITLE_KEYS[normalizedTitle];
-  if (translationKey) {
-    return translate(translationKey);
-  }
-  return title.trim() || translate('usage_stats.request_events_log_section');
-};
-
-const isPreferredRequestLogChunkBreak = (character: string) =>
-  character === ','
-  || character === '}'
-  || character === ']'
-  || /\s/u.test(character);
-
-const findPreferredRequestLogChunkEnd = (
-  content: string,
-  start: number,
-  idealEnd: number,
-) => {
-  const minimumEnd = Math.max(
-    start + Math.floor((idealEnd - start) * 0.75),
-    idealEnd - REQUEST_LOG_VIRTUAL_BREAK_LOOKBACK,
+function RequestEventsTokenMetric({
+  direction,
+  label,
+  value,
+  fullValue,
+}: {
+  direction: 'input' | 'output';
+  label: string;
+  value: string;
+  fullValue: string;
+}) {
+  const Icon = direction === 'input' ? IconArrowUpFromLine : IconArrowDownToLine;
+  return (
+    <span
+      className={`${styles.requestEventsTokenMetric} ${direction === 'input' ? styles.requestEventsTokenMetricInput : styles.requestEventsTokenMetricOutput}`}
+      role="img"
+      aria-label={`${label}: ${fullValue}`}
+      data-token-direction={direction}
+      data-token-flow={direction === 'input' ? 'upload' : 'download'}
+    >
+      <span className={styles.requestEventsMetricIconSlot} aria-hidden="true">
+        <Icon size={14} aria-hidden="true" />
+      </span>
+      <span>{value}</span>
+    </span>
   );
-  for (let end = idealEnd; end > minimumEnd; end -= 1) {
-    if (isPreferredRequestLogChunkBreak(content[end - 1] ?? '')) {
-      return end;
-    }
-  }
-  return idealEnd;
-};
+}
 
-const fallbackRequestLogCodePointBoundary = (content: string, start: number, end: number) => {
-  if (end <= start) return start;
-  const previousCodeUnit = content.charCodeAt(end - 1);
-  const nextCodeUnit = content.charCodeAt(end);
-  const splitsSurrogatePair = previousCodeUnit >= 0xD800 && previousCodeUnit <= 0xDBFF
-    && nextCodeUnit >= 0xDC00 && nextCodeUnit <= 0xDFFF;
-  return splitsSurrogatePair ? end - 1 : end;
-};
+function RequestEventsReasoningMetric({ label, value, fullValue }: { label: string; value: string; fullValue: string }) {
+  return (
+    <span
+      className={`${styles.requestEventsTokenMetric} ${styles.requestEventsTokenMetricReasoning}`}
+      role="img"
+      aria-label={`${label}: ${fullValue}`}
+      data-token-direction="reasoning"
+    >
+      <span className={styles.requestEventsMetricIconSlot} aria-hidden="true">
+        <IconBrain size={12} aria-hidden="true" />
+      </span>
+      <span>{value}</span>
+    </span>
+  );
+}
 
-const findRequestLogGraphemeBoundary = (
-  content: string,
-  start: number,
-  candidateEnd: number,
-  lineEnd: number,
-) => {
-  if (candidateEnd >= lineEnd) return lineEnd;
-  if (!REQUEST_LOG_GRAPHEME_SEGMENTER) {
-    return fallbackRequestLogCodePointBoundary(content, start, candidateEnd);
-  }
+function RequestEventsCacheMetric({
+  operation,
+  label,
+  value,
+  fullValue,
+}: {
+  operation: 'read' | 'write';
+  label: string;
+  value: string;
+  fullValue: string;
+}) {
+  const Icon = operation === 'read' ? IconDatabaseArrowUp : IconDatabaseArrowDown;
+  return (
+    <span
+      className={`${styles.requestEventsCacheMetric} ${operation === 'read' ? styles.requestEventsCacheMetricRead : styles.requestEventsCacheMetricWrite}`}
+      role="img"
+      aria-label={`${label}: ${fullValue}`}
+      data-cache-operation={operation}
+      data-cache-flow={operation === 'read' ? 'upload' : 'download'}
+    >
+      <span className={styles.requestEventsMetricIconSlot} aria-hidden="true">
+        <Icon className={styles.requestEventsCacheIcon} size={14} aria-hidden="true" />
+      </span>
+      <span>{value}</span>
+    </span>
+  );
+}
 
-  // 只分割候选点附近的小窗口，避免对多 MiB ASCII 日志逐字执行字素分析。
-  const contextStart = Math.max(start, candidateEnd - REQUEST_LOG_GRAPHEME_CONTEXT_CHARS);
-  const contextEnd = Math.min(lineEnd, candidateEnd + REQUEST_LOG_GRAPHEME_CONTEXT_CHARS);
-  let safeEnd = contextStart;
-  for (const segment of REQUEST_LOG_GRAPHEME_SEGMENTER.segment(content.slice(contextStart, contextEnd))) {
-    const boundary = contextStart + segment.index;
-    if (boundary > candidateEnd) break;
-    if (boundary > start) {
-      safeEnd = boundary;
-    }
-  }
-  if (safeEnd > start) return safeEnd;
-  return fallbackRequestLogCodePointBoundary(content, start, candidateEnd);
-};
-
-export const splitRequestLogVirtualChunks = (
-  content: string,
-  maxChunkChars = REQUEST_LOG_VIRTUAL_CHUNK_CHARS,
-): string[] => {
-  if (content === '') return [''];
-  const chunkSize = Math.max(2, Math.floor(maxChunkChars));
-  const chunks: string[] = [];
-  let lineStart = 0;
-
-  while (lineStart <= content.length) {
-    const newlineIndex = content.indexOf('\n', lineStart);
-    const lineEnd = newlineIndex === -1 ? content.length : newlineIndex;
-    if (lineStart === lineEnd) {
-      chunks.push('');
-    } else {
-      let offset = lineStart;
-      while (offset < lineEnd) {
-        const idealEnd = Math.min(offset + chunkSize, lineEnd);
-        const preferredEnd = idealEnd < lineEnd
-          ? findPreferredRequestLogChunkEnd(content, offset, idealEnd)
-          : lineEnd;
-        const end = findRequestLogGraphemeBoundary(content, offset, preferredEnd, lineEnd);
-        chunks.push(content.slice(offset, end));
-        offset = end;
-      }
-    }
-    if (newlineIndex === -1) break;
-    lineStart = newlineIndex + 1;
-  }
-
-  return chunks;
-};
+const RequestEventTableRow = React.memo(function RequestEventTableRow({
+  row,
+  columns,
+  virtualIndex,
+  measureElement,
+}: RequestEventTableRowProps) {
+  return (
+    <tr
+      ref={measureElement}
+      data-index={virtualIndex}
+      aria-rowindex={virtualIndex === undefined ? undefined : virtualIndex + 2}
+    >
+      {columns.map((column) => (
+        <React.Fragment key={column.id}>{column.renderCell(row)}</React.Fragment>
+      ))}
+    </tr>
+  );
+});
 
 export interface RequestEventsDetailsCardProps {
   events: UsageEvent[];
   loading: boolean;
-  page: number;
-  pageSize: number;
-  pageSizeOptions: readonly number[];
   totalCount: number;
-  totalPages: number;
   modelOptions: string[];
   sourceOptions: UsageSourceFilterOption[];
   modelFilter: string;
   sourceFilter: string;
   resultFilter: string;
   exportingFormat?: RequestEventExportFormat | null;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  autoLoadMore?: boolean;
   initialVisibleColumnIds?: readonly RequestEventColumnId[];
   initialColumnOrder?: readonly RequestEventColumnId[];
   visibleColumnIds?: readonly RequestEventColumnId[];
   columnOrder?: readonly RequestEventColumnId[];
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (pageSize: number) => void;
   onModelFilterChange: (model: string) => void;
+  onLoadMore?: () => void;
   onSourceFilterChange: (source: string) => void;
   onResultFilterChange: (result: string) => void;
   onExport?: (format: RequestEventExportFormat) => void;
@@ -286,15 +309,18 @@ const toNumber = (value: unknown): number => {
   return parsed;
 };
 
-const formatRequestEventTimestamp = (timestamp: string): string => {
+const formatRequestEventTimestamp = (timestamp: string): { time: string; date: string } => {
   const match = timestamp.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):(\d{2})/);
-  if (!match) return timestamp || '-';
-  return `${match[1]}/${match[2]}/${match[3]} ${match[4]}:${match[5]}:${match[6]}`;
+  if (!match) return { time: timestamp || '-', date: '' };
+  return {
+    time: `${match[4]}:${match[5]}:${match[6]}`,
+    date: `${match[1]}/${match[2]}/${match[3]}`,
+  };
 };
 
 const formatCacheReadRate = (cacheReadTokens: number, inputTokens: number): string => {
-  const rate = calculateCacheReadRate({ inputTokens, cacheReadTokens });
-  return rate === null ? '-' : `${rate.toFixed(2)}%`;
+  const value = calculateCacheReadRate({ inputTokens, cacheReadTokens });
+  return value === null ? '-' : `${value.toFixed(2)}%`;
 };
 
 const formatTTFTMs = (ttftMs: number | null): string => {
@@ -358,6 +384,31 @@ const buildSpeedModeTooltipLines = (
   ),
 ];
 
+const formatRequestEventMetricTooltipLine = (
+  label: string,
+  value: string,
+  t: (key: string, options?: Record<string, string>) => string,
+): string => t('usage_stats.request_events_metric_tooltip_line', { label, value });
+
+const buildTokenTooltipLines = (
+  row: RequestEventRow,
+  t: (key: string, options?: Record<string, string>) => string,
+): string[] => [
+  formatRequestEventMetricTooltipLine(t('usage_stats.total_tokens'), row.totalTokensLabel, t),
+  formatRequestEventMetricTooltipLine(t('usage_stats.input_tokens'), row.inputTokensLabel, t),
+  formatRequestEventMetricTooltipLine(t('usage_stats.output_tokens'), row.outputTokensLabel, t),
+  formatRequestEventMetricTooltipLine(t('usage_stats.reasoning_tokens'), row.reasoningTokensLabel, t),
+];
+
+const buildCacheTooltipLines = (
+  row: RequestEventRow,
+  t: (key: string, options?: Record<string, string>) => string,
+): string[] => [
+  formatRequestEventMetricTooltipLine(t('usage_stats.cache_rate'), row.cacheReadRate, t),
+  formatRequestEventMetricTooltipLine(t('usage_stats.cache_read_tokens'), row.cacheReadTokensLabel, t),
+  formatRequestEventMetricTooltipLine(t('usage_stats.cache_creation_tokens'), row.cacheCreationTokensLabel, t),
+];
+
 const parseRequestEndpoint = (rawEndpoint: unknown): { requestType: string; endpoint: string } => {
   const raw = String(rawEndpoint ?? '').trim().replace(/\s+/g, ' ');
   if (!raw) {
@@ -371,169 +422,6 @@ const parseRequestEndpoint = (rawEndpoint: unknown): { requestType: string; endp
   const normalizedPath = path.startsWith('/v1/') ? path.slice(3) : path === '/v1' ? '/' : path;
   return { requestType, endpoint: normalizedPath || '-' };
 };
-
-const copyRequestLogSectionContent = async (content: string) => {
-  const clipboard = globalThis.navigator?.clipboard;
-  if (clipboard) {
-    try {
-      await clipboard.writeText(content);
-      return;
-    } catch {
-      // HTTP LAN pages may block the Clipboard API; fall through to textarea copy.
-    }
-  }
-
-  if (typeof document === 'undefined' || typeof document.execCommand !== 'function') {
-    throw new Error('clipboard is not available');
-  }
-  const previouslyFocused = document.activeElement instanceof HTMLElement
-    ? document.activeElement
-    : null;
-  const textarea = document.createElement('textarea');
-  textarea.value = content;
-  textarea.readOnly = true;
-  textarea.tabIndex = -1;
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  textarea.style.pointerEvents = 'none';
-  textarea.style.top = '0';
-  textarea.style.left = '0';
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  try {
-    if (!document.execCommand('copy')) {
-      throw new Error('copy command failed');
-    }
-  } finally {
-    textarea.remove();
-    if (previouslyFocused?.isConnected) {
-      previouslyFocused.focus();
-    }
-  }
-};
-
-function RequestLogSectionDisclosure({
-  title,
-  content,
-  defaultOpen,
-}: {
-  title: string;
-  content: string;
-  defaultOpen: boolean;
-}) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(defaultOpen);
-  const [hasOpened, setHasOpened] = useState(defaultOpen);
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
-  const panelId = useId();
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-  useScrollBoundaryContainment(scrollerRef);
-  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const chunks = useMemo(
-    () => hasOpened ? splitRequestLogVirtualChunks(content) : [],
-    [content, hasOpened],
-  );
-  // TanStack Virtual 依赖内部可变测量状态，不参与 React Compiler 自动记忆化。
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const rowVirtualizer = useVirtualizer({
-    count: hasOpened ? chunks.length : 0,
-    getScrollElement: () => scrollerRef.current,
-    estimateSize: () => REQUEST_LOG_VIRTUAL_LINE_HEIGHT,
-    overscan: REQUEST_LOG_VIRTUAL_OVERSCAN,
-    paddingStart: REQUEST_LOG_VIRTUAL_PADDING_Y,
-    paddingEnd: REQUEST_LOG_VIRTUAL_PADDING_Y,
-    initialRect: { width: 0, height: 360 },
-  });
-  const virtualItems = rowVirtualizer.getVirtualItems();
-  const handleToggle = useCallback(() => {
-    const nextOpen = !open;
-    if (nextOpen) {
-      setHasOpened(true);
-    }
-    setOpen(nextOpen);
-  }, [open]);
-  const handleCopy = useCallback(async () => {
-    try {
-      await copyRequestLogSectionContent(content);
-      setCopyState('copied');
-    } catch {
-      setCopyState('failed');
-    }
-    if (copyResetTimerRef.current) {
-      clearTimeout(copyResetTimerRef.current);
-    }
-    copyResetTimerRef.current = setTimeout(() => setCopyState('idle'), 1600);
-  }, [content]);
-
-  useEffect(() => () => {
-    if (copyResetTimerRef.current) {
-      clearTimeout(copyResetTimerRef.current);
-    }
-  }, []);
-
-  const copyLabel = copyState === 'copied'
-    ? t('usage_stats.request_events_log_copied_section', { section: title })
-    : copyState === 'failed'
-      ? t('usage_stats.request_events_log_copy_failed_section', { section: title })
-      : t('usage_stats.request_events_log_copy_section', { section: title });
-
-  return (
-    <section
-      className={`${styles.requestEventsLogSection} ${open ? styles.requestEventsLogSectionOpen : ''}`.trim()}
-    >
-      <div className={styles.requestEventsLogSectionHeader}>
-        <button
-          type="button"
-          className={styles.requestEventsLogSectionTrigger}
-          aria-expanded={open}
-          aria-controls={panelId}
-          onClick={handleToggle}
-        >
-          <span className={styles.requestEventsLogSectionTitle}>{title}</span>
-          <span className={styles.requestEventsLogSectionChevron} aria-hidden="true">
-            <IconChevronDown size={14} />
-          </span>
-        </button>
-        <button
-          type="button"
-          className={`${styles.requestEventsLogSectionCopyButton} ${copyState === 'copied' ? styles.requestEventsLogSectionCopyButtonCopied : ''} ${copyState === 'failed' ? styles.requestEventsLogSectionCopyButtonFailed : ''}`.trim()}
-          onClick={() => void handleCopy()}
-          aria-label={copyLabel}
-          title={copyLabel}
-        >
-          {copyState === 'copied' ? <IconCheck size={14} /> : <IconCopy size={14} />}
-        </button>
-      </div>
-      <div
-        id={panelId}
-        className={styles.requestEventsLogSectionPanel}
-        aria-hidden={!open}
-      >
-        <div className={styles.requestEventsLogSectionPanelInner} ref={scrollerRef}>
-          {hasOpened ? (
-            <div
-              className={styles.requestEventsLogVirtualSpacer}
-              style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
-            >
-              {virtualItems.map((virtualItem) => (
-                <pre
-                  key={virtualItem.key}
-                  ref={rowVirtualizer.measureElement}
-                  data-index={virtualItem.index}
-                  className={styles.requestEventsLogVirtualLine}
-                  style={{ transform: `translateY(${virtualItem.start}px)` }}
-                >
-                  {chunks[virtualItem.index] || ' '}
-                </pre>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </section>
-  );
-}
 
 function RequestEventsExportMenu({
   label,
@@ -578,8 +466,6 @@ function RequestEventsExportMenu({
   return (
     <div
       className={styles.requestEventsExportMenu}
-      onMouseEnter={() => !disabled && setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
       onKeyDown={handleKeyDown}
       onBlur={handleBlur}
     >
@@ -612,25 +498,23 @@ function RequestEventsExportMenu({
 export function RequestEventsDetailsCard({
   events,
   loading,
-  page,
-  pageSize,
-  pageSizeOptions,
   totalCount,
-  totalPages,
   modelOptions: backendModelOptions,
   sourceOptions: backendSourceOptions,
   modelFilter,
   sourceFilter,
   resultFilter,
   exportingFormat = null,
+  hasMore = false,
+  loadingMore = false,
+  autoLoadMore = true,
   initialVisibleColumnIds,
   initialColumnOrder,
   visibleColumnIds,
   columnOrder,
-  onPageChange,
-  onPageSizeChange,
   onModelFilterChange,
   onSourceFilterChange,
+  onLoadMore,
   onResultFilterChange,
   onExport,
   onVisibleColumnIdsChange,
@@ -655,7 +539,6 @@ export function RequestEventsDetailsCard({
   const [columnSettingsOpen, setColumnSettingsOpen] = useState(false);
   const [columnSettingsSession, setColumnSettingsSession] = useState(0);
   const requestEventsTableWrapperRef = useRef<HTMLDivElement | null>(null);
-  const resultLocale = t('usage_stats.success') === 'Success' ? 'en' : 'zh';
   const latencyHint = t('usage_stats.latency_unit_hint', {
     field: LATENCY_SOURCE_FIELD,
     unit: t('usage_stats.duration_unit_ms'),
@@ -686,6 +569,7 @@ export function RequestEventsDetailsCard({
       const speedMode = formatSpeedMode(speedModeRaw, t);
       const responseSpeedMode = formatSpeedMode(responseSpeedModeRaw, t);
       const endpointFields = parseRequestEndpoint(event.endpoint);
+      const timestampLabels = formatRequestEventTimestamp(timestamp);
       const inputTokens = Math.max(toNumber(event.tokens?.input_tokens), 0);
       const outputTokens = Math.max(toNumber(event.tokens?.output_tokens), 0);
       const reasoningTokens = Math.max(toNumber(event.tokens?.reasoning_tokens), 0);
@@ -698,9 +582,15 @@ export function RequestEventsDetailsCard({
       const clientIP = String(event.client_ip ?? '').trim() || '-';
       const xForwardedFor = String(event.x_forwarded_for ?? '').trim() || '-';
       const userAgent = String(event.user_agent ?? '').trim() || '-';
+      const executorType = String(event.executor_type ?? '').trim() || '-';
       // 费用由后端按当前价格配置运行时计算，前端只负责展示可用/不可用状态。
       const costAvailable = event.cost_available === true;
       const cost = costAvailable ? Math.max(toNumber(event.cost_usd), 0) : null;
+      const pricingStyle = event.pricing_style === 'claude'
+        ? t('usage_stats.credentials_detail_pricing_style_claude')
+        : event.pricing_style === 'openai'
+          ? t('usage_stats.credentials_detail_pricing_style_openai')
+          : '-';
 
       return {
         event,
@@ -708,7 +598,8 @@ export function RequestEventsDetailsCard({
         requestId: String(event.request_id ?? '').trim(),
         timestamp,
         timestampMs: Number.isNaN(timestampMs) ? 0 : timestampMs,
-        timestampLabel: formatRequestEventTimestamp(timestamp),
+        timestampTimeLabel: timestampLabels.time,
+        timestampDateLabel: timestampLabels.date,
         apiKey,
         model,
         modelAlias,
@@ -726,8 +617,11 @@ export function RequestEventsDetailsCard({
         isDelete: event.isDelete === true,
         failed: event.failed === true,
         latencyMs,
+        latencyLabel: formatDurationMs(latencyMs),
         ttftMs,
+        ttftLabel: formatTTFTMs(ttftMs),
         speedTPS,
+        speedLabel: formatSpeedTPS(speedTPS),
         clientIP,
         xForwardedFor,
         userAgent,
@@ -737,12 +631,58 @@ export function RequestEventsDetailsCard({
         cacheReadTokens,
         cacheCreationTokens,
         totalTokens,
+        inputTokensDisplayLabel: formatCompactTokenValue(inputTokens),
+        outputTokensDisplayLabel: formatCompactTokenValue(outputTokens),
+        reasoningTokensDisplayLabel: formatCompactTokenValue(reasoningTokens),
+        cacheReadTokensDisplayLabel: formatCompactTokenValue(cacheReadTokens),
+        cacheCreationTokensDisplayLabel: formatCompactTokenValue(cacheCreationTokens),
+        totalTokensDisplayLabel: formatCompactTokenValue(totalTokens),
+        inputTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(inputTokens),
+        outputTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(outputTokens),
+        reasoningTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(reasoningTokens),
+        cacheReadTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(cacheReadTokens),
+        cacheCreationTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(cacheCreationTokens),
+        totalTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(totalTokens),
         cacheReadRate: formatCacheReadRate(cacheReadTokens, inputTokens),
         cost,
         costAvailable,
+        costLabel: costAvailable && cost !== null ? formatUsd(cost) : '-',
+        pricingStyle,
+        executorType,
       };
     });
   }, [events, t]);
+  const virtualizeRows = rows.length > REQUEST_EVENT_VIRTUALIZATION_THRESHOLD;
+  // TanStack Virtual 依赖内部可变测量状态，不参与 React Compiler 自动记忆化。
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const eventRowVirtualizer = useVirtualizer({
+    count: virtualizeRows ? rows.length : 0,
+    getScrollElement: () => requestEventsTableWrapperRef.current,
+    estimateSize: () => REQUEST_EVENT_VIRTUAL_ROW_HEIGHT,
+    overscan: REQUEST_EVENT_VIRTUAL_OVERSCAN,
+    getItemKey: (index) => rows[index]?.id ?? index,
+    initialRect: { width: 0, height: REQUEST_EVENT_VIRTUAL_INITIAL_VIEWPORT_HEIGHT },
+    useAnimationFrameWithResizeObserver: true,
+  });
+  const virtualRows = eventRowVirtualizer.getVirtualItems();
+  const virtualPaddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const virtualPaddingBottom = virtualRows.length > 0
+    ? Math.max(eventRowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end, 0)
+    : 0;
+  const handleTableScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    if (!autoLoadMore || !hasMore || loading || loadingMore || !onLoadMore) return;
+    const scroller = event.currentTarget;
+    if (shouldLoadMoreRequestEvents(scroller)) {
+      onLoadMore();
+    }
+  }, [autoLoadMore, hasMore, loading, loadingMore, onLoadMore]);
+  useEffect(() => {
+    const scroller = requestEventsTableWrapperRef.current;
+    if (!scroller || !autoLoadMore || !hasMore || loading || loadingMore || !onLoadMore) return;
+    if (shouldLoadMoreRequestEvents(scroller)) {
+      onLoadMore();
+    }
+  }, [autoLoadMore, hasMore, loading, loadingMore, onLoadMore, rows.length]);
   useScrollBoundaryContainment(requestEventsTableWrapperRef, rows.length > 0);
 
   const [internalVisibleColumnIds, setInternalVisibleColumnIds] = useState<RequestEventColumnId[]>(() => (
@@ -768,6 +708,11 @@ export function RequestEventsDetailsCard({
     () => new Set<RequestEventColumnId>(effectiveVisibleColumnIds),
     [effectiveVisibleColumnIds]
   );
+  useLayoutEffect(() => {
+    if (virtualizeRows) {
+      eventRowVirtualizer.measure();
+    }
+  }, [effectiveVisibleColumnIds, eventRowVirtualizer, virtualizeRows]);
   const effectiveColumnOrder = useMemo(
     () => normalizeRequestEventColumnOrder(selectedColumnOrder),
     [selectedColumnOrder]
@@ -785,18 +730,6 @@ export function RequestEventsDetailsCard({
     onVisibleColumnIdsChange?.(nextVisibleColumnIds);
     onColumnOrderChange?.(nextColumnOrder);
   }, [isColumnOrderControlled, isColumnSelectionControlled, onColumnOrderChange, onVisibleColumnIdsChange]);
-  const requestLogOpen = Boolean(requestLogResponse || requestLogError || requestLogLoadingEventId);
-  const requestLogTooLarge = requestLogResponse?.too_large === true || (requestLogResponse?.previewable === false && requestLogResponse?.downloadable === true);
-  const requestLogTitle = requestLogTooLarge ? t('usage_stats.request_events_log_too_large_title') : t('usage_stats.request_events_log_title');
-  const requestLogSections = requestLogResponse?.sections ?? [];
-  const requestLogDownloadable = Boolean(requestLogResponse?.downloadable && String(requestLogResponse?.event_id ?? '').trim() && onRequestLogDownload);
-  const handleRequestLogDownloadAction = useCallback(() => {
-    const eventId = String(requestLogResponse?.event_id ?? '').trim();
-    if (eventId && onRequestLogDownload) {
-      onRequestLogDownload(eventId);
-    }
-  }, [onRequestLogDownload, requestLogResponse?.event_id]);
-
   const renderClientMetadataCell = useCallback((value: string, maxLength: number) => {
     const hasValue = value !== '-';
     const tooltipLines = [value];
@@ -879,8 +812,9 @@ export function RequestEventsDetailsCard({
         label: t('usage_stats.request_events_timestamp'),
         header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.request_events_timestamp')}</th>,
         renderCell: (row) => (
-          <td title={row.timestamp} className={styles.requestEventsNoWrapCell}>
-            {row.timestampLabel}
+          <td title={row.timestamp} className={`${styles.requestEventsNoWrapCell} ${styles.requestEventsStackedCell}`}>
+            <span className={styles.requestEventsStackedPrimary}>{row.timestampTimeLabel}</span>
+            {row.timestampDateLabel ? <span className={styles.requestEventsStackedSecondary}>{row.timestampDateLabel}</span> : null}
           </td>
         ),
       },
@@ -888,7 +822,7 @@ export function RequestEventsDetailsCard({
         id: 'api_key',
         label: t('usage_stats.api_key_filter'),
         header: <th>{t('usage_stats.api_key_filter')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsAPIKeyCell} title={row.apiKey}>{row.apiKey}</td>,
+        renderCell: (row) => <td className={`${styles.requestEventsAPIKeyCell} ${styles.requestEventsPrimaryCell}`} title={row.apiKey}>{row.apiKey}</td>,
       },
       {
         id: 'source',
@@ -897,17 +831,15 @@ export function RequestEventsDetailsCard({
         renderCell: (row) => (
           <td className={styles.requestEventsSourceCell} title={row.source}>
             <span className={styles.requestEventsSourceStack}>
-              <span className={styles.requestEventsSourceValue}>{row.source}</span>
-              {(row.isDelete || row.sourceType) && (
+              <span className={styles.requestEventsSourceIdentity}>
+                <ProviderBrandIcon providerType={row.sourceType} size={25} />
+                <span className={styles.requestEventsSourceValue}>{row.source}</span>
+              </span>
+              {row.isDelete ? (
                 <span className={styles.requestEventsSourceTags}>
-                  {row.sourceType && (
-                    <span className={styles.credentialType}>{row.sourceType}</span>
-                  )}
-                  {row.isDelete && (
-                    <span className={styles.requestEventsDeletedTag}>{t('usage_stats.deleted')}</span>
-                  )}
+                  <span className={styles.requestEventsDeletedTag}>{t('usage_stats.deleted')}</span>
                 </span>
-              )}
+              ) : null}
             </span>
           </td>
         ),
@@ -916,19 +848,18 @@ export function RequestEventsDetailsCard({
         id: 'model',
         label: t('usage_stats.model_name'),
         header: <th>{t('usage_stats.model_name')}</th>,
-        renderCell: (row) => <td className={styles.modelCell}>{row.model}</td>,
-      },
-      {
-        id: 'model_alias',
-        label: t('usage_stats.model_alias'),
-        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.model_alias')}</th>,
-        renderCell: (row) => <td className={styles.modelCell} title={row.modelAlias}>{row.modelAlias}</td>,
+        renderCell: (row) => (
+          <td className={`${styles.modelCell} ${styles.requestEventsStackedCell}`}>
+            <span className={styles.requestEventsStackedPrimary} title={row.model}>{row.model}</span>
+            <span className={styles.requestEventsStackedSecondary} title={row.modelAlias}>{row.modelAlias}</span>
+          </td>
+        ),
       },
       {
         id: 'reasoning_effort',
         label: t('usage_stats.reasoning_effort'),
         header: <th className={styles.requestEventsNoWrapCell} title={t('usage_stats.reasoning_effort_hint')}>{t('usage_stats.reasoning_effort')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.reasoningEffort}</td>,
+        renderCell: (row) => <td className={`${styles.requestEventsNoWrapCell} ${styles.requestEventsPrimaryCell}`}>{row.reasoningEffort}</td>,
       },
       {
         id: 'service_tier',
@@ -938,7 +869,7 @@ export function RequestEventsDetailsCard({
           const tooltipLines = buildSpeedModeTooltipLines(row, t);
           return (
             <td
-              className={`${styles.requestEventsNoWrapCell} ${styles.requestEventsSpeedModeCell}`}
+              className={`${styles.requestEventsNoWrapCell} ${styles.requestEventsSpeedModeCell} ${styles.requestEventsPrimaryCell}`}
               tabIndex={0}
               aria-label={tooltipLines.join('; ')}
               onMouseEnter={(event) => handleRequestEventsTooltipMouseEnter(tooltipLines, event.currentTarget)}
@@ -956,66 +887,144 @@ export function RequestEventsDetailsCard({
         label: t('usage_stats.request_events_result'),
         header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.request_events_result')}</th>,
         renderCell: (row) => {
-          const resultLabel = row.failed ? t('usage_stats.failure') : t('usage_stats.success');
           const loading = requestLogLoadingEventId === row.id;
-          const resultClassName = row.failed ? styles.requestEventsResultFailed : styles.requestEventsResultSuccess;
           const canOpenLog = Boolean(requestLogAccessEnabled && row.requestId && onRequestLogOpen);
           return (
             <td className={styles.requestEventsNoWrapCell}>
-              {canOpenLog ? (
-                <button
-                  type="button"
-                  className={`${resultClassName} ${styles.requestEventsResultLogButton}`.trim()}
-                  data-result-locale={resultLocale}
-                  onClick={() => {
-                    onRequestLogOpen?.(row.event);
-                  }}
-                  title={t('usage_stats.request_events_log_hint')}
-                  aria-label={loading ? t('usage_stats.request_events_log_loading_aria', { result: resultLabel }) : t('usage_stats.request_events_log_open_aria', { result: resultLabel })}
-                  aria-busy={loading}
-                  disabled={loading}
-                >
-                  <span>{resultLabel}</span>
-                  <span className={styles.requestEventsResultLogIcon} aria-hidden="true">
-                    <IconScrollText size={9} />
-                  </span>
-                </button>
-              ) : (
-                <span className={resultClassName} data-result-locale={resultLocale}>{resultLabel}</span>
-              )}
+              <RequestEventResultBadge
+                failed={row.failed}
+                loading={loading}
+                onOpen={canOpenLog ? () => onRequestLogOpen?.(row.event) : undefined}
+              />
             </td>
           );
         },
       },
       {
         id: 'request_type',
-        label: t('usage_stats.request_type'),
-        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.request_type')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.requestType}</td>,
-      },
-      {
-        id: 'endpoint',
-        label: t('usage_stats.request_endpoint'),
-        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.request_endpoint')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell} title={row.endpoint}>{row.endpoint}</td>,
-      },
-      {
-        id: 'ttft',
-        label: t('usage_stats.ttft'),
-        header: <th className={styles.requestEventsNoWrapCell} title={ttftHint}>{t('usage_stats.ttft')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{formatTTFTMs(row.ttftMs)}</td>,
+        label: t('usage_stats.request_events_request'),
+        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.request_events_request')}</th>,
+        renderCell: (row) => (
+          <td className={`${styles.requestEventsNoWrapCell} ${styles.requestEventsStackedCell}`}>
+            <span className={styles.requestEventsStackedPrimary}>{row.requestType}</span>
+            <span className={styles.requestEventsStackedSecondary} title={row.endpoint}>{row.endpoint}</span>
+          </td>
+        ),
       },
       {
         id: 'latency',
-        label: t('usage_stats.latency'),
-        header: <th className={styles.requestEventsNoWrapCell} title={latencyHint}>{t('usage_stats.latency')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{formatDurationMs(row.latencyMs)}</td>,
+        label: t('usage_stats.request_events_latency'),
+        header: <th className={styles.requestEventsNoWrapCell} title={`${latencyHint}; ${ttftHint}`}>{t('usage_stats.request_events_latency')}</th>,
+        renderCell: (row) => (
+          <td className={`${styles.requestEventsNoWrapCell} ${styles.requestEventsStackedCell}`}>
+            <span className={styles.requestEventsStackedPrimary}>{row.latencyLabel}</span>
+            <span className={styles.requestEventsStackedSecondary}>
+              <span className={styles.requestEventsStackedLabel}>{t('usage_stats.ttft')}</span> {row.ttftLabel}
+            </span>
+          </td>
+        ),
       },
       {
         id: 'speed',
         label: t('usage_stats.speed'),
         header: <th className={styles.requestEventsNoWrapCell} title={speedHint}>{t('usage_stats.speed')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{formatSpeedTPS(row.speedTPS)}</td>,
+        renderCell: (row) => <td className={`${styles.requestEventsNoWrapCell} ${styles.requestEventsPrimaryCell}`}>{row.speedLabel}</td>,
+      },
+      {
+        id: 'total_tokens',
+        label: t('usage_stats.request_events_tokens'),
+        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.request_events_tokens')}</th>,
+        renderCell: (row) => {
+          const tooltipLines = buildTokenTooltipLines(row, t);
+          return (
+            <td
+              className={`${styles.requestEventsNoWrapCell} ${styles.requestEventsStackedCell} ${styles.requestEventsSpeedModeCell}`}
+              tabIndex={0}
+              aria-label={tooltipLines.join('; ')}
+              onMouseEnter={(event) => handleRequestEventsTooltipMouseEnter(tooltipLines, event.currentTarget)}
+              onMouseLeave={(event) => handleRequestEventsTooltipMouseLeave(event.currentTarget)}
+              onFocus={(event) => handleRequestEventsTooltipFocus(tooltipLines, event.currentTarget)}
+              onBlur={(event) => handleRequestEventsTooltipBlur(event.currentTarget)}
+            >
+              <span className={styles.requestEventsStackedPrimary}>{row.totalTokensDisplayLabel}</span>
+              <div className={styles.requestEventsTokenMetricRow}>
+                <RequestEventsTokenMetric
+                  direction="input"
+                  label={t('usage_stats.input_tokens')}
+                  value={row.inputTokensDisplayLabel}
+                  fullValue={row.inputTokensLabel}
+                />
+              </div>
+              <div className={styles.requestEventsTokenMetricRow}>
+                <RequestEventsTokenMetric
+                  direction="output"
+                  label={t('usage_stats.output_tokens')}
+                  value={row.outputTokensDisplayLabel}
+                  fullValue={row.outputTokensLabel}
+                />
+                <RequestEventsReasoningMetric
+                  label={t('usage_stats.reasoning_tokens')}
+                  value={row.reasoningTokensDisplayLabel}
+                  fullValue={row.reasoningTokensLabel}
+                />
+              </div>
+            </td>
+          );
+        },
+      },
+      {
+        id: 'cache_read_rate',
+        label: t('usage_stats.request_events_cache'),
+        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.request_events_cache')}</th>,
+        renderCell: (row) => {
+          const tooltipLines = buildCacheTooltipLines(row, t);
+          return (
+            <td
+              className={`${styles.requestEventsNoWrapCell} ${styles.requestEventsStackedCell} ${styles.requestEventsSpeedModeCell}`}
+              tabIndex={0}
+              aria-label={tooltipLines.join('; ')}
+              onMouseEnter={(event) => handleRequestEventsTooltipMouseEnter(tooltipLines, event.currentTarget)}
+              onMouseLeave={(event) => handleRequestEventsTooltipMouseLeave(event.currentTarget)}
+              onFocus={(event) => handleRequestEventsTooltipFocus(tooltipLines, event.currentTarget)}
+              onBlur={(event) => handleRequestEventsTooltipBlur(event.currentTarget)}
+            >
+              <span className={styles.requestEventsCacheRate}>
+                {row.cacheReadRate}
+              </span>
+              <div className={styles.requestEventsCacheMetrics}>
+                <RequestEventsCacheMetric
+                  operation="read"
+                  label={t('usage_stats.cache_read_tokens')}
+                  value={row.cacheReadTokensDisplayLabel}
+                  fullValue={row.cacheReadTokensLabel}
+                />
+                <RequestEventsCacheMetric
+                  operation="write"
+                  label={t('usage_stats.cache_creation_tokens')}
+                  value={row.cacheCreationTokensDisplayLabel}
+                  fullValue={row.cacheCreationTokensLabel}
+                />
+              </div>
+            </td>
+          );
+        },
+      },
+      {
+        id: 'total_cost',
+        label: t('usage_stats.request_events_cost'),
+        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.request_events_cost')}</th>,
+        renderCell: (row) => (
+          <td className={`${styles.requestEventsNoWrapCell} ${styles.requestEventsStackedCell}`} title={row.costAvailable ? undefined : t('usage_stats.cost_need_price')}>
+            <span className={styles.requestEventsStackedPrimary}>{row.costLabel}</span>
+            <span className={styles.requestEventsStackedSecondary}>{row.pricingStyle}</span>
+          </td>
+        ),
+      },
+      {
+        id: 'executor_type',
+        label: t('usage_stats.credentials_detail_executor'),
+        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.credentials_detail_executor')}</th>,
+        renderCell: (row) => <td className={`${styles.requestEventsExecutorCell} ${styles.requestEventsPrimaryCell}`} title={row.executorType}>{row.executorType}</td>,
       },
       {
         id: 'client_ip',
@@ -1044,58 +1053,6 @@ export function RequestEventsDetailsCard({
           REQUEST_EVENT_USER_AGENT_DISPLAY_LENGTH,
         ),
       },
-      {
-        id: 'input_tokens',
-        label: t('usage_stats.input_tokens'),
-        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.input_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.inputTokens.toLocaleString()}</td>,
-      },
-      {
-        id: 'output_tokens',
-        label: t('usage_stats.output_tokens'),
-        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.output_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.outputTokens.toLocaleString()}</td>,
-      },
-      {
-        id: 'reasoning_tokens',
-        label: t('usage_stats.reasoning_tokens'),
-        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.reasoning_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.reasoningTokens.toLocaleString()}</td>,
-      },
-      {
-        id: 'cache_read_tokens',
-        label: t('usage_stats.cache_read_tokens'),
-        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.cache_read_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.cacheReadTokens.toLocaleString()}</td>,
-      },
-      {
-        id: 'cache_creation_tokens',
-        label: t('usage_stats.cache_creation_tokens'),
-        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.cache_creation_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.cacheCreationTokens.toLocaleString()}</td>,
-      },
-      {
-        id: 'cache_read_rate',
-        label: t('usage_stats.cache_rate'),
-        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.cache_rate')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.cacheReadRate}</td>,
-      },
-      {
-        id: 'total_tokens',
-        label: t('usage_stats.total_tokens'),
-        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.total_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.totalTokens.toLocaleString()}</td>,
-      },
-      {
-        id: 'total_cost',
-        label: t('usage_stats.total_cost'),
-        header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.total_cost')}</th>,
-        renderCell: (row) => (
-          <td className={styles.requestEventsNoWrapCell} title={row.costAvailable ? undefined : t('usage_stats.cost_need_price')}>
-            {row.costAvailable && row.cost !== null ? formatUsd(row.cost) : '-'}
-          </td>
-        ),
-      },
     ];
 
     return definitions;
@@ -1109,7 +1066,6 @@ export function RequestEventsDetailsCard({
     requestLogAccessEnabled,
     requestLogLoadingEventId,
     renderClientMetadataCell,
-    resultLocale,
     speedHint,
     t,
     ttftHint,
@@ -1132,10 +1088,6 @@ export function RequestEventsDetailsCard({
     sourceFilter !== ALL_FILTER ||
     resultFilter !== ALL_FILTER;
 
-  const computedTotalPages = pageSize > 0 ? Math.ceil(totalCount / pageSize) : 0;
-  const safeTotalPages = Math.max(totalPages, computedTotalPages, rows.length > 0 ? 1 : 0);
-  const safePage = safeTotalPages > 0 ? Math.min(Math.max(page, 1), safeTotalPages) : 0;
-  const pageLabel = safeTotalPages > 0 ? `${safePage} / ${safeTotalPages}` : t('usage_stats.request_events_page_empty');
 
   const handleClearFilters = () => {
     onModelFilterChange(ALL_FILTER);
@@ -1244,8 +1196,8 @@ export function RequestEventsDetailsCard({
           />
         ) : (
           <>
-            <div ref={requestEventsTableWrapperRef} className={styles.requestEventsTableWrapper}>
-              <table className={styles.table}>
+            <div ref={requestEventsTableWrapperRef} className={styles.requestEventsTableWrapper} data-virtualized={virtualizeRows} data-loaded-row-count={rows.length} onScroll={handleTableScroll}>
+              <table className={styles.table} aria-rowcount={totalCount + 1}>
                 <thead>
                   <tr>
                     {visibleColumns.map((column) => (
@@ -1254,12 +1206,41 @@ export function RequestEventsDetailsCard({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.id}>
-                      {visibleColumns.map((column) => (
-                        <React.Fragment key={column.id}>{column.renderCell(row)}</React.Fragment>
-                      ))}
-                    </tr>
+                  {virtualizeRows ? (
+                    <>
+                      {virtualPaddingTop > 0 && (
+                        <tr
+                          className={styles.requestEventsVirtualSpacerRow}
+                          style={{ height: `${virtualPaddingTop}px` }}
+                          aria-hidden="true"
+                        >
+                          <td colSpan={visibleColumns.length} />
+                        </tr>
+                      )}
+                      {virtualRows.map((virtualRow) => {
+                        const row = rows[virtualRow.index];
+                        return (
+                          <RequestEventTableRow
+                            key={virtualRow.key}
+                            row={row}
+                            columns={visibleColumns}
+                            virtualIndex={virtualRow.index}
+                            measureElement={eventRowVirtualizer.measureElement}
+                          />
+                        );
+                      })}
+                      {virtualPaddingBottom > 0 && (
+                        <tr
+                          className={styles.requestEventsVirtualSpacerRow}
+                          style={{ height: `${virtualPaddingBottom}px` }}
+                          aria-hidden="true"
+                        >
+                          <td colSpan={visibleColumns.length} />
+                        </tr>
+                      )}
+                    </>
+                  ) : rows.map((row) => (
+                    <RequestEventTableRow key={row.id} row={row} columns={visibleColumns} />
                   ))}
                 </tbody>
               </table>
@@ -1267,19 +1248,36 @@ export function RequestEventsDetailsCard({
 
             <div className={styles.requestEventsPaginationFooter}>
               <div className={styles.requestEventsPaginationControls}>
-                <label className={styles.requestEventsPageSizeControl}>
-                  <span>{t('usage_stats.request_events_rows_per_page')}</span>
-                  <select value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))} disabled={loading}>
-                    {pageSizeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                </label>
-                <button type="button" className={styles.requestEventsPagerButton} onClick={() => onPageChange(page - 1)} disabled={loading || safePage <= 1}>
-                  {t('usage_stats.request_events_previous_page')}
-                </button>
-                <span className={styles.requestEventsPaginationPage}>{pageLabel}</span>
-                <button type="button" className={styles.requestEventsPagerButton} onClick={() => onPageChange(page + 1)} disabled={loading || safeTotalPages === 0 || safePage >= safeTotalPages}>
-                  {t('usage_stats.request_events_next_page')}
-                </button>
+                <>
+                  <span
+                    className={styles.requestEventsPaginationPage}
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    aria-label={t('usage_stats.request_events_loaded_count', { loaded: rows.length, total: totalCount })}
+                  >
+                    <span className={styles.requestEventsPaginationLabel}>
+                      {t('usage_stats.request_events_loaded_label')}
+                    </span>
+                    <strong className={styles.requestEventsPaginationLoaded}>{rows.length}</strong>
+                    <span className={styles.requestEventsPaginationTotal} aria-hidden="true">
+                      / {totalCount}
+                    </span>
+                  </span>
+                  {hasMore && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      appearance="action"
+                      onClick={onLoadMore}
+                      loading={loadingMore}
+                      disabled={loading}
+                    >
+                      {loadingMore ? t('common.loading') : t('usage_stats.request_events_load_more')}
+                    </Button>
+                  )}
+                </>
               </div>
             </div>
           </>
@@ -1295,56 +1293,14 @@ export function RequestEventsDetailsCard({
         onClose={() => setColumnSettingsOpen(false)}
       />
       <PortalTooltip tooltip={requestEventsTooltip} />
-      <Modal
-        open={requestLogOpen}
-        title={requestLogTitle}
-        onClose={onRequestLogClose ?? (() => undefined)}
-        width={requestLogTooLarge ? 360 : 920}
-        className={requestLogTooLarge ? styles.requestEventsLargeLogModal : undefined}
-        footer={
-          requestLogTooLarge ? (
-            <>
-              <Button variant="secondary" size="sm" appearance="action" onClick={onRequestLogClose ?? (() => undefined)}>
-                {t('common.cancel')}
-              </Button>
-              <Button variant="primary" size="sm" appearance="action" onClick={handleRequestLogDownloadAction} loading={requestLogDownloading} disabled={!requestLogDownloadable}>
-                {requestLogDownloading ? t('common.loading') : t('usage_stats.request_events_log_download')}
-              </Button>
-            </>
-          ) : requestLogDownloadable ? (
-            <Button variant="secondary" size="sm" appearance="action" onClick={handleRequestLogDownloadAction} loading={requestLogDownloading}>
-              {requestLogDownloading ? t('common.loading') : t('usage_stats.request_events_log_download')}
-            </Button>
-          ) : undefined
-        }
-      >
-        <div className={styles.requestEventsLogViewer}>
-          {requestLogLoadingEventId && !requestLogResponse && !requestLogError ? (
-            <div className={styles.hint} role="status" aria-live="polite">{t('common.loading')}</div>
-          ) : requestLogError ? (
-            <div className={styles.errorBox} role="status" aria-live="polite">{requestLogError}</div>
-          ) : requestLogTooLarge ? (
-            <div className={styles.requestEventsLargeLogPrompt} role="status" aria-live="polite">{t('usage_stats.request_events_log_too_large')}</div>
-          ) : requestLogResponse ? (
-            <>
-              {requestLogSections.length > 0 ? (
-                <div className={styles.requestEventsLogSections}>
-                  {requestLogSections.map((section, index) => (
-                    <RequestLogSectionDisclosure
-                      key={`${requestLogResponse.event_id}-${section.title}-${index}`}
-                      title={formatRequestLogSectionTitle(section.title, t)}
-                      content={section.content}
-                      defaultOpen={index === 0}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className={styles.hint}>{t('usage_stats.request_events_log_empty')}</div>
-              )}
-            </>
-          ) : null}
-        </div>
-      </Modal>
+      <RequestEventLogModal
+        loadingEventId={requestLogLoadingEventId}
+        response={requestLogResponse}
+        error={requestLogError}
+        onClose={onRequestLogClose}
+        onDownload={onRequestLogDownload}
+        downloading={requestLogDownloading}
+      />
     </>
   );
 }

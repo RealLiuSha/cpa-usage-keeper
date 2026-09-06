@@ -59,6 +59,8 @@ type App struct {
 	Poller       StatusProvider
 	RedisIngest  Runner
 	RedisProcess Runner
+	// CPAErrors 是完全独立的 best-effort errors 订阅；停止或失败不影响 Usage 与 HTTP。
+	CPAErrors Runner
 	// UsageAggregation 是唯一串行调度三类派生聚合事务的后台 runner。
 	UsageAggregation  Runner
 	Ranking           Runner
@@ -198,8 +200,9 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 
 	cpaClient := cpa.NewClient(cfg.CPABaseURL, cfg.CPAManagementKey, cfg.RequestTimeout, cfg.TLSSkipVerify)
 	quotaService := quota.NewServiceWithOptions(db, cpaClient, quota.ServiceOptions{
-		RefreshWorkerLimit: cfg.QuotaRefreshWorkerLimit,
-		PricingCatalog:     pricingCatalog,
+		RefreshWorkerLimit:            cfg.QuotaRefreshWorkerLimit,
+		QuotaUpstreamResponsesEnabled: cfg.QuotaUpstreamResponsesEnabled,
+		PricingCatalog:                pricingCatalog,
 	})
 	// 单 writer aggregation runner 只维护 rollups/Identity，并在 App.Run 时主动追平。
 	usageAggregationRunner := poller.NewUsageAggregationRunner(db)
@@ -251,6 +254,18 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 	redisIngestRunner.SetControlMessageObserver(metadataSyncRunner)
 	// redisProcessRunner 仍然只处理本地 inbox 到 usage_events 的消费。
 	redisProcessRunner := poller.NewRedisProcessRunner(syncService)
+	// errorEventService 同时承担 Errors runner 的直接写入和详情 API 的分页读取。
+	errorEventService := service.NewErrorEventService(db)
+	// Errors 使用独立 RESP source，固定订阅 errors channel，不修改或复用 Usage subscriber 生命周期。
+	redisErrorSubscribeSource := poller.NewRedisErrorSubscribeSource(poller.RedisSubscribeOptions{
+		BaseURL:       cfg.CPABaseURL,
+		RedisAddr:     cfg.RedisQueueAddr,
+		ManagementKey: cfg.CPAManagementKey,
+		Timeout:       cfg.RequestTimeout,
+		TLS:           cfg.RedisQueueTLS,
+		TLSSkipVerify: cfg.TLSSkipVerify,
+	})
+	redisErrorIngestRunner := poller.NewRedisErrorIngestRunner(redisErrorSubscribeSource, errorEventService)
 	// backgroundPoller 继续组合远端 ingest 和本地 process 的状态展示。
 	backgroundPoller := poller.NewRedisPoller(redisIngestRunner, redisProcessRunner)
 	var backupMaintenance *DatabaseBackupRunner
@@ -301,12 +316,13 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 		sessionManager = auth.NewPersistentSessionManager(cfg.AuthSessionTTL, auth.NewGormSessionStore(db))
 	}
 	authConfig := api.AuthConfig{
-		Enabled:              cfg.AuthEnabled,
-		LoginPassword:        cfg.LoginPassword,
-		SessionTTL:           cfg.AuthSessionTTL,
-		BasePath:             cfg.AppBasePath,
-		FrameAncestorOrigins: frameAncestorOrigins(cfg),
-		TrustedProxyCIDRs:    cfg.TrustedProxyCIDRs,
+		Enabled:                         cfg.AuthEnabled,
+		LoginPassword:                   cfg.LoginPassword,
+		SessionTTL:                      cfg.AuthSessionTTL,
+		BasePath:                        cfg.AppBasePath,
+		FrameAncestorOrigins:            frameAncestorOrigins(cfg),
+		TrustedProxyCIDRs:               cfg.TrustedProxyCIDRs,
+		APIKeyViewerLocalRankingEnabled: cfg.APIKeyViewerLocalRankingEnabled,
 	}
 	authHandler := api.NewAuthHandler(authConfig, sessionManager)
 
@@ -320,6 +336,7 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 		// Redis ingest/process 分成两个后台 runner，避免远端订阅拉取和本地 SQLite 处理互相等待。
 		RedisIngest:       redisIngestRunner,
 		RedisProcess:      redisProcessRunner,
+		CPAErrors:         redisErrorIngestRunner,
 		UsageAggregation:  usageAggregationRunner,
 		Ranking:           rankingRunner,
 		LocalRanking:      localRankingRunner,
@@ -341,6 +358,7 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 			cfg.AppBasePath,
 			api.OptionalProviders{
 				UsageIdentity: usageIdentityService,
+				ErrorEvents:   errorEventService,
 				Quota:         quotaService,
 				CPAAPIKeys:    cpaAPIKeyService,
 				AuthFiles:     authFilesManagementService,
@@ -448,6 +466,14 @@ func (a *App) Run() error {
 		a.startBackgroundTask(func() {
 			if err := a.RedisProcess.Run(ctx); err != nil {
 				logrus.Errorf("redis process stopped: %v", err)
+			}
+		})
+	}
+	if a.CPAErrors != nil {
+		a.startBackgroundTask(func() {
+			// Errors 是可选在线观测；runner 内部吞掉订阅/写入失败，这里只防御意外实现错误。
+			if err := a.CPAErrors.Run(ctx); err != nil {
+				logrus.Errorf("CPA errors ingest stopped: %v", err)
 			}
 		})
 	}

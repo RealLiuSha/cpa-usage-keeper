@@ -672,19 +672,24 @@ func (s *usageService) ListUsageEvents(ctx context.Context, filter servicedto.Us
 		return nil, err
 	}
 	page, err := repository.ListUsageEventsWithFilter(s.db.WithContext(ctx), repodto.UsageQueryFilter{
-		Range:        filter.Range,
-		CustomUnit:   filter.CustomUnit,
-		StartTime:    filter.StartTime,
-		EndTime:      filter.EndTime,
-		EndExclusive: filter.EndExclusive,
-		Limit:        filter.Limit,
-		Page:         filter.Page,
-		PageSize:     filter.PageSize,
-		Offset:       filter.Offset,
-		Model:        filter.Model,
-		AuthIndex:    filter.AuthIndex,
-		APIGroupKey:  apiGroupKey,
-		Result:       filter.Result,
+		Range:           filter.Range,
+		CustomUnit:      filter.CustomUnit,
+		StartTime:       filter.StartTime,
+		EndTime:         filter.EndTime,
+		EndExclusive:    filter.EndExclusive,
+		Limit:           filter.Limit,
+		Page:            filter.Page,
+		PageSize:        filter.PageSize,
+		Offset:          filter.Offset,
+		CursorMode:      filter.CursorMode,
+		CursorTimestamp: filter.CursorTimestamp,
+		CursorID:        filter.CursorID,
+		SkipTotalCount:  filter.SkipTotalCount,
+		Model:           filter.Model,
+		AuthIndex:       filter.AuthIndex,
+		AuthType:        filter.AuthType,
+		APIGroupKey:     apiGroupKey,
+		Result:          filter.Result,
 	}, s.pricing.NewResolver())
 	if err != nil {
 		return nil, err
@@ -724,7 +729,7 @@ func (s *usageService) ListUsageEvents(ctx context.Context, filter servicedto.Us
 			PricingStyle:        row.PricingStyle,
 		})
 	}
-	return &servicedto.UsageEventsPage{Events: result, TotalCount: page.TotalCount, Page: page.Page, PageSize: page.PageSize, TotalPages: page.TotalPages}, nil
+	return &servicedto.UsageEventsPage{Events: result, TotalCount: page.TotalCount, Page: page.Page, PageSize: page.PageSize, TotalPages: page.TotalPages, HasMore: page.HasMore}, nil
 }
 
 // StreamUsageEvents 使用 Request Event Log 相同筛选条件逐行导出，不应用分页。
@@ -742,6 +747,7 @@ func (s *usageService) StreamUsageEvents(ctx context.Context, filter servicedto.
 		EndExclusive: filter.EndExclusive,
 		Model:        filter.Model,
 		AuthIndex:    filter.AuthIndex,
+		AuthType:     filter.AuthType,
 		APIGroupKey:  apiGroupKey,
 		Result:       filter.Result,
 	}, func(row repodto.UsageEventRecord) error {

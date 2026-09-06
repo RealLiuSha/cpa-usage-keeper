@@ -79,6 +79,16 @@ func TestOrderedMigrationsPreservesExecutionOrder(t *testing.T) {
 		"20260731_local_ranking_stats",
 		"20260803_add_cpa_api_key_local_ranking_avatar",
 		"20260807_add_cpa_api_keys_source",
+		"20260813_add_auth_session_client_metadata",
+		// Errors 表已经随 main 发布，合并后的完整序列必须先保留该版本。
+		"20260820_create_error_events",
+		// 旧 Codex 主额度历史先按已发布顺序创建，后续迁移再清空并通用化。
+		"20260820_codex_quota_history",
+		"20260822_rebuild_quota_history",
+		"20260824_add_auth_session_alias",
+		"20260827_reset_quota_history",
+		"20260902_repair_usage_event_quota_window_index",
+		"20260905_usage_event_api_group_key_timestamp_index",
 	}
 	assertStringSlicesEqual(t, want, got)
 }
@@ -115,6 +125,14 @@ func TestOpenDatabaseRunsSchemaMigrationsAndAddsUsageEventRedisFields(t *testing
 	}
 	if !db.Migrator().HasColumn(&entities.AuthSession{}, "source") {
 		t.Fatal("expected auth_sessions.source column to exist")
+	}
+	for _, column := range []string{"login_ip", "last_seen_ip", "user_agent", "last_seen_at"} {
+		if !db.Migrator().HasColumn(&entities.AuthSession{}, column) {
+			t.Fatalf("expected auth_sessions.%s column to exist", column)
+		}
+	}
+	if !db.Migrator().HasColumn(&entities.AuthSession{}, "alias") {
+		t.Fatal("expected auth_sessions.alias column to exist")
 	}
 	if !db.Migrator().HasTable(&entities.AppSetting{}) {
 		t.Fatal("expected app_settings table to exist")

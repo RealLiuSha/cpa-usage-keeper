@@ -1,3 +1,4 @@
+import { stripAppBasePath } from '../usageNavigation';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   isActiveShareLocation,
@@ -7,7 +8,6 @@ import {
   resolveShareTab,
   sharePathForTab,
   SHARE_TABS,
-  stripAppBasePath,
 } from '../shareMode';
 import { apiPath, isSharePublicAPIEnabled } from '../api';
 import { getUsageTabOptions } from '@/pages/UsagePage';

@@ -105,6 +105,10 @@ Docker Compose 是推荐部署方式：首次部署可同时运行 CPA + Keeper�
 
 登录保护默认启用。启动 Keeper 前请配置 `LOGIN_PASSWORD`；只有部署环境已可靠隔离访问时，才显式设置 `AUTH_ENABLED=false`。
 
+## Benchmark
+
+`linux/amd64` 生产型容量测试覆盖持续 ingestion、Dashboard 延迟、CPU 利用率和 Keeper cgroup 峰值内存，完整结果见 [容量 Benchmark 报告](./internal/benchmark/REPORT.zh.md)。
+
 ## 项目结构
 
 ```text
@@ -117,7 +121,8 @@ internal/repository/     SQLite 持久化与聚合
 internal/service/        用量、定价与身份服务
 internal/quota/          Provider 限额刷新与巡检
 internal/ranking/        社区排名聚合与同步
-deploy/linux/            systemd 服务模板
+internal/benchmark/      容量套件、报告、manifest 与历史 Go microbenchmark
+deploy/                  部署模板
 web/                     React + TypeScript 前端
 ```
 
@@ -234,7 +239,7 @@ CPA 数据保存在 `./cpa`，Keeper 数据保存在 `./keeper`。
 CPA 已经部署好时，直接使用仓库中的 Keeper-only Compose 模板：
 
 ```bash
-cp docker-compose.example.yml docker-compose.yml
+cp deploy/docker-compose.example.yml docker-compose.yml
 cp .env.example .env
 vim .env
 ```
@@ -391,6 +396,7 @@ cp .env.example .env
 | `AUTH_ENABLED` | 否 | `true` | 是否启用登录保护 |
 | `LOGIN_PASSWORD` | 鉴权启用时必填 | - | 登录密码 |
 | `AUTH_SESSION_TTL` | 否 | `168h` | 登录 session 有效时长 |
+| `API_KEY_VIEWER_LOCAL_RANKING_ENABLED` | 否 | `false` | 允许 API Key 登录用户只读查看本地排行；Community 排行始终只读 |
 
 ### 时区与请求行为
 
@@ -407,6 +413,7 @@ Auth Files 定时限额刷新在 Auth Files 巡检弹窗的小齿轮中配置。
 | 变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `QUOTA_REFRESH_WORKER_LIMIT` | 否 | `10` | 手动刷新和定时刷新共用的 Auth Files 限额刷新队列最大并发数，最大 `100` |
+| `QUOTA_UPSTREAM_RESPONSES_ENABLED` | 否 | `false` | 缓存每个凭证最近一次限额查询的原始上游响应，并通过 quota task/cache API 返回，供浏览器 Network 面板排障；响应可能包含账号数据 |
 
 ### Redis 队列高级配置
 

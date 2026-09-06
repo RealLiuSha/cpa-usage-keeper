@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, appPath, createUsageEventRequestLogDownloadURL, deleteAuthFiles, exportUsageEvents, fetchAnalysis, fetchAnalysisLatency, fetchAuthSessions, fetchCpaApiKeyOptions, fetchCpaApiKeys, fetchCpaApiKeySettings, fetchKeyActivity, fetchKeyOverview, fetchKeyOverviewRealtime, fetchQuotaAutoRefreshSettings, fetchUsageActivity, fetchUsageOverview, fetchUsageOverviewRealtime, fetchUsageQuotaCache, fetchUsageQuotaInspectionStatus, fetchUsageQuotaResetCredits, fetchUpdateCheck, fetchUsageEventModelFilterOptions, fetchUsageEventRequestLog, fetchUsageEventSourceFilterOptions, fetchUsageEvents, fetchUsageIdentities, fetchUsageIdentitiesPage, fetchUsageQuotaRefreshTask, fetchVersion, loginWithCPAAPIKey, logout, refreshUsageQuotas, resetUsageQuota, revokeAuthSession, setAuthFilesDisabled, startUsageQuotaInspection, updateCpaApiKeyAlias, updateQuotaAutoRefreshSettings } from '../api';
+import { ApiError, appPath, createUsageEventRequestLogDownloadURL, deleteAuthFiles, exportUsageEvents, fetchAnalysis, fetchAnalysisLatency, fetchAuthSessions, fetchCodexQuotaHistory, fetchCpaApiKeyOptions, fetchCpaApiKeys, fetchCpaApiKeySettings, fetchKeyActivity, fetchKeyAnalysis, fetchKeyAnalysisLatency, fetchKeyOverview, fetchKeyOverviewRealtime, fetchQuotaAutoRefreshSettings, fetchUsageActivity, fetchUsageOverview, fetchUsageOverviewRealtime, fetchUsageQuotaCache, fetchUsageQuotaInspectionStatus, fetchUsageQuotaResetCredits, fetchUpdateCheck, fetchUsageEventModelFilterOptions, fetchUsageEventRequestLog, fetchUsageEventSourceFilterOptions, fetchUsageEvents, fetchUsageIdentities, fetchUsageIdentitiesPage, fetchUsageQuotaRefreshTask, fetchVersion, loginWithCPAAPIKey, logout, refreshUsageQuotas, resetUsageQuota, revokeAuthSession, setAuthFilesDisabled, startUsageQuotaInspection, updateAuthSessionAlias, updateCpaApiKeyAlias, updateQuotaAutoRefreshSettings } from '../api';
 
 const headerValue = (init: RequestInit | undefined, name: string): string | null => new Headers(init?.headers).get(name);
 
@@ -60,6 +60,33 @@ describe('fetchUsageEvents', () => {
     expect(parsed.searchParams.get('start')).toBeNull();
     expect(parsed.searchParams.get('end')).toBeNull();
     expect(init).toMatchObject({ credentials: 'include', signal });
+  });
+
+  it('loads key analysis sections without accepting a client API key scope', async () => {
+    vi.stubGlobal('window', { __APP_BASE_PATH__: '/keeper' });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+    } as Response);
+    const signal = new AbortController().signal;
+    const request = { range: 'custom' as const, unit: 'day' as const, start: '2026-08-01', end: '2026-08-07' };
+
+    await fetchKeyAnalysis(request, signal);
+    await fetchKeyAnalysisLatency(request, signal);
+
+    expect(fetchMock.mock.calls).toHaveLength(2);
+    const [analysisURL, latencyURL] = fetchMock.mock.calls.map(([rawURL]) => new URL(String(rawURL), 'http://localhost'));
+    expect(analysisURL.pathname).toBe('/keeper/api/v1/key-analysis');
+    expect(latencyURL.pathname).toBe('/keeper/api/v1/key-analysis/latency');
+    for (const url of [analysisURL, latencyURL]) {
+      expect(url.searchParams.get('range')).toBe('custom');
+      expect(url.searchParams.get('unit')).toBe('day');
+      expect(url.searchParams.get('start')).toBe('2026-08-01');
+      expect(url.searchParams.get('end')).toBe('2026-08-07');
+      expect(url.searchParams.get('api_key_id')).toBeNull();
+    }
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ credentials: 'include', signal });
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ credentials: 'include', signal });
   });
 
   it('sends the displayed 1d range as today on every usage request surface', async () => {
@@ -291,6 +318,23 @@ describe('fetchUsageEvents', () => {
     expect(fetchMock.mock.calls[1][1]).toMatchObject({ credentials: 'include', method: 'DELETE' });
   });
 
+  it('updates an admin session alias through the dedicated session endpoint', async () => {
+    vi.stubGlobal('window', { __APP_BASE_PATH__: undefined });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'session/hash', kind: 'admin', role: 'admin', source: 'standard', alias: 'Office Mac' }),
+    } as Response);
+
+    const updated = await updateAuthSessionAlias('session/hash', 'Office Mac');
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(updated.alias).toBe('Office Mac');
+    expect(new URL(String(url), 'http://localhost').pathname).toBe('/api/v1/auth/sessions/session%2Fhash');
+    expect(init).toMatchObject({ credentials: 'include', method: 'PATCH' });
+    expect(headerValue(init, 'Content-Type')).toBe('application/json');
+    expect(init?.body).toBe(JSON.stringify({ alias: 'Office Mac' }));
+  });
+
   it('loads quota auto refresh settings from the typed quota endpoint', async () => {
     vi.stubGlobal('window', { __APP_BASE_PATH__: undefined });
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
@@ -422,6 +466,47 @@ describe('fetchUsageEvents', () => {
     expect(parsed.searchParams.get('result')).toBe('failed');
     expect(parsed.searchParams.get('auth_index')).toBeNull();
     expect(init).toMatchObject({ credentials: 'include', signal });
+  });
+
+  it('passes cursor pagination metadata for incremental event loading', async () => {
+    vi.stubGlobal('window', { __APP_BASE_PATH__: undefined });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ events: [], total_count: -1, page: 1, page_size: 100, total_pages: 0, has_more: false }),
+    } as Response);
+
+    await fetchUsageEvents({ range: '24h' }, undefined, {
+      pageSize: 100,
+      cursorMode: true,
+      cursor: 'opaque-cursor',
+    });
+
+    const parsed = new URL(String(fetchMock.mock.calls[0][0]), 'http://localhost');
+    expect(parsed.searchParams.get('page_size')).toBe('100');
+    expect(parsed.searchParams.get('cursor_mode')).toBe('true');
+    expect(parsed.searchParams.get('cursor')).toBe('opaque-cursor');
+    expect(parsed.searchParams.get('page')).toBeNull();
+  });
+
+  it('loads latest credential events without a fixed range and includes the identity type', async () => {
+    vi.stubGlobal('window', { __APP_BASE_PATH__: undefined });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ events: [], total_count: 0, page: 1, page_size: 50, total_pages: 0, has_more: false }),
+    } as Response);
+
+    await fetchUsageEvents(undefined, undefined, {
+      pageSize: 50,
+      cursorMode: true,
+      source: 'shared-auth',
+      authType: 2,
+    });
+
+    const parsed = new URL(String(fetchMock.mock.calls[0][0]), 'http://localhost');
+    expect(parsed.searchParams.get('range')).toBeNull();
+    expect(parsed.searchParams.get('source')).toBe('shared-auth');
+    expect(parsed.searchParams.get('auth_type')).toBe('2');
+    expect(parsed.searchParams.get('cursor_mode')).toBe('true');
   });
 
   it('exports usage events with filters but without pagination params', async () => {
@@ -766,6 +851,24 @@ describe('fetchUsageEvents', () => {
     expect(init).toMatchObject({ credentials: 'include', method: 'POST', signal });
     expect(headerValue(init, 'Content-Type')).toBe('application/json');
     expect(init?.body).toBe(JSON.stringify({ auth_indexes: ['auth-1'] }));
+  });
+
+  it('loads one encoded Codex quota history role', async () => {
+    vi.stubGlobal('window', { __APP_BASE_PATH__: undefined });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ generated_at: '2026-08-21T12:00:00Z', range_start: '2026-07-22T12:00:00Z', windows: [], selected_window: null, cycles: [] }),
+    } as Response);
+    const signal = new AbortController().signal;
+
+    await fetchCodexQuotaHistory('codex/auth + user', { windowRole: 'primary' }, signal);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    const parsed = new URL(String(url), 'http://localhost');
+    expect(parsed.pathname).toBe('/api/v1/quota/history/codex%2Fauth%20%2B%20user');
+    expect(parsed.searchParams.get('window_role')).toBe('primary');
+    expect(parsed.searchParams.has('window_seconds')).toBe(false);
+    expect(init).toMatchObject({ credentials: 'include', signal });
   });
 
   it('creates quota refresh tasks for current page auth indexes', async () => {

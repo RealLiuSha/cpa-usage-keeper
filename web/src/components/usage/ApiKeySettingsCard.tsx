@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { IconEye, IconEyeOff } from '@/components/ui/icons';
+import { IconCheck, IconCopy, IconEye, IconEyeOff } from '@/components/ui/icons';
 import { useScrollBoundaryContainment } from '@/hooks/useScrollBoundaryContainment';
 import type { CpaApiKeySettingsItem, CpaApiKeySource } from '@/lib/types';
 import styles from '@/pages/UsagePage.module.scss';
@@ -275,7 +275,21 @@ export function ApiKeySettingsCard({ apiKeys, loading = false, savingId = null, 
                       >
                         <div className={styles.apiKeySettingsSummary}>
                           <span className={styles.apiKeyFieldLabel}>{fieldLabel}</span>
-                          <span className={styles.apiKeySettingsName} title={apiKey}>{apiKey}</span>
+                          <div className={styles.apiKeySettingsNameRow}>
+                            <span className={styles.apiKeySettingsName} title={apiKey}>{apiKey}</span>
+                            {!plugin ? (
+                              <button
+                                type="button"
+                                className={`${styles.apiKeySettingsCopyIconButton} ${copiedId === item.id ? styles.apiKeySettingsCopyIconButtonCopied : ''}`.trim()}
+                                onClick={() => void handleCopyApiKey(item)}
+                                disabled={!item.apiKey}
+                                aria-label={copyLabel}
+                                title={copyLabel}
+                              >
+                                {copiedId === item.id ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                              </button>
+                            ) : null}
+                          </div>
                           <span className={styles.apiKeySourceBadge} data-source={plugin ? 'plugin' : 'native'}>
                             {sourceLabel}
                           </span>
@@ -296,18 +310,6 @@ export function ApiKeySettingsCard({ apiKeys, loading = false, savingId = null, 
                             />
                           </label>
                           <div className={styles.apiKeySettingsActions}>
-                            {!plugin ? (
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                appearance="action"
-                                className={styles.apiKeySettingsCopyButton}
-                                onClick={() => void handleCopyApiKey(item)}
-                                disabled={!item.apiKey}
-                              >
-                                {copyLabel}
-                              </Button>
-                            ) : null}
                             <Button
                               variant="primary"
                               size="sm"
