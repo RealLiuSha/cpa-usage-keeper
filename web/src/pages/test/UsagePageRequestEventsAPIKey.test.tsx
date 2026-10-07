@@ -89,7 +89,7 @@ describe('UsagePage top API Key request event filter', () => {
 
   const render = async () => { await act(async () => root.render(<UsagePage />)); };
   const button = (text: string) => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((node) => node.textContent?.trim() === text)!;
-  const topKey = () => container.querySelector<HTMLButtonElement>('[data-dashboard-toolbar] button[aria-label^="API Key: "]')!;
+  const topKey = () => container.querySelector<HTMLInputElement>('[data-dashboard-toolbar] input[aria-label^="API Key: "]')!;
   const storedFilters = () => JSON.parse(localStorage.getItem(REQUEST_EVENTS_PREFERENCES_STORAGE_KEY)!).filters;
   const choose = async (control: HTMLElement, label: string) => {
     await act(async () => control.click());
@@ -132,7 +132,7 @@ describe('UsagePage top API Key request event filter', () => {
     await act(async () => root.unmount());
     root = createRoot(container);
     await render();
-    expect(topKey().textContent).toContain('Other key');
+    expect(topKey().value).toContain('Other key');
     expect(api.fetchUsageEvents.mock.lastCall![2].apiKeyId).toBe('33');
     await act(async () => button('Clear Filters').click());
     expect(storedFilters()).toEqual({ model: '__all__', source: '__all__', result: '__all__' });
@@ -147,6 +147,20 @@ describe('UsagePage top API Key request event filter', () => {
     expect(api.fetchUsageEvents.mock.lastCall![2].apiKeyId).toBe('');
     expect(localStorage.getItem(TOP_KEY_STORAGE)).toBe('');
     expect(storedFilters()).not.toHaveProperty('apiKeyId');
+  });
+
+  it('filters the top API Key options by label before selection', async () => {
+    await render();
+    const control = topKey();
+    expect(control.value).toContain('Overview key');
+    await act(async () => control.click());
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(control, 'Other');
+      control.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(Array.from(document.querySelectorAll('[role="option"]'), (option) => option.textContent)).toEqual(['Other key']);
+    await act(async () => document.querySelector<HTMLButtonElement>('[role="option"]')!.click());
+    expect(api.fetchUsageEvents.mock.lastCall![2].apiKeyId).toBe('33');
   });
 
   it.each([undefined, '22'])('waits for saved top key options before querying, refreshing or exporting with legacy list key %s', async (apiKeyId) => {

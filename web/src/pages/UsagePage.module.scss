@@ -586,7 +586,8 @@
 .apiKeySelectControl {
   min-width: 0;
 
-  :global(button) {
+  :global(button),
+  :global(input[role='combobox']) {
     border-radius: 9999px;
   }
 }
@@ -595,7 +596,8 @@
   width: 172px;
   flex: 0 0 172px;
 
-  :global(button) {
+  :global(button),
+  :global(input[role='combobox']) {
     height: 34px;
     border-color: var(--border-color);
     background: var(--bg-primary);

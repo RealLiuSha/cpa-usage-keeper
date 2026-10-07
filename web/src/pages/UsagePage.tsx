@@ -1068,6 +1068,20 @@ export function UsagePage({ onAuthRequired, shareMode = false, initialShareTab }
     ],
     [apiKeyOptions, t],
   );
+  const apiKeyFilterSearch = useMemo(
+    () => ({
+      placeholder: t('usage_stats.api_key_filter_search'),
+      noResultsText: t('usage_stats.api_key_filter_no_results'),
+    }),
+    [t],
+  );
+  const apiKeyToolbarSelectOptions = useMemo(
+    () => apiKeySelectOptions.map((option) => ({
+      ...option,
+      triggerLabel: `${t('usage_stats.api_key_filter')}: ${option.label}`,
+    })),
+    [apiKeySelectOptions, t],
+  );
   const credentialTypeCountsForProviderFilter = useMemo(() => {
     if (credentialSectionVisibility.showAuthFiles) return credentialsData.authFileTypeCounts;
     if (credentialSectionVisibility.showAiProvider) return credentialsData.aiProviderTypeCounts;
@@ -2190,6 +2204,7 @@ export function UsagePage({ onAuthRequired, shareMode = false, initialShareTab }
                         ariaLabel={t('usage_stats.api_key_filter')}
                         fullWidth={false}
                         dropdownMinWidth={180}
+                        search={apiKeyFilterSearch}
                       />
                     </label>
                   </div>
@@ -2247,12 +2262,12 @@ export function UsagePage({ onAuthRequired, shareMode = false, initialShareTab }
                 <Select
                   key="api-key"
                   value={selectedApiKeyId}
-                  options={apiKeySelectOptions}
+                  options={apiKeyToolbarSelectOptions}
                   onChange={setSelectedApiKeyId}
                   ariaLabel={`${t('usage_stats.api_key_filter')}: ${apiKeySelectOptions.find((option) => option.value === selectedApiKeyId)?.label ?? ''}`}
                   fullWidth={false}
                   dropdownMinWidth={180}
-                  renderValue={(option) => <><span data-dashboard-filter-caption>{t('usage_stats.api_key_filter')}</span><span data-dashboard-filter-value>{option?.label}</span></>}
+                  search={apiKeyFilterSearch}
                 />,
                 ...showRangeControls ? [<TimeRangeControl key="range" value={timeRange} customRange={activeCustomRange} timeZone={rangeTimeZone} maxCustomDayRangeDays={activeTab === 'events' ? REQUEST_EVENTS_CUSTOM_DAY_RANGE_MAX_DAYS : undefined} onChange={handleTimeRangeChange} ariaLabel={t('usage_stats.range_filter')} labelInsideTrigger />] : [],
               ] : showRankingScopeControl ? [<RankingScopeSwitch key="ranking-scope" value={rankingScope} onChange={handleRankingScopeChange} />] : []}
