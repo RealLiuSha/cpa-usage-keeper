@@ -37,11 +37,18 @@ type RolePathOptions = {
   sharePublicEnabled?: boolean;
 };
 
+type RolePathOptionsInput = RolePathOptions | boolean;
+
+const normalizeRolePathOptions = (options: RolePathOptionsInput): RolePathOptions => (
+  typeof options === 'boolean' ? { isEmbeddedInCPAMC: options } : options
+);
+
 export const getRoleTargetPath = (
   role: AuthRole,
   currentPath: string,
-  { isEmbeddedInCPAMC = false, sharePublicEnabled = isSharePublicFeatureEnabled() }: RolePathOptions = {},
+  options: RolePathOptionsInput = {},
 ): string => {
+  const { isEmbeddedInCPAMC = false, sharePublicEnabled = isSharePublicFeatureEnabled() } = normalizeRolePathOptions(options);
   if (sharePublicEnabled && resolveShareTab(currentPath)) return currentPath;
   // 路径白名单与会话角色共同决定落点；未知路径只回到该角色自己的首页。
   if (role === 'api_key_viewer') {
@@ -57,7 +64,7 @@ export const getRoleTargetPath = (
 export const shouldNormalizeRolePath = (
   role: AuthRole,
   currentPath: string,
-  options: RolePathOptions = {},
+  options: RolePathOptionsInput = {},
 ): boolean => currentPath !== getRoleTargetPath(role, currentPath, options);
 
 function App() {
@@ -137,7 +144,10 @@ function App() {
       }
       const currentPath = stripAppBasePath(window.location.pathname, window.__APP_BASE_PATH__) ?? '/';
       const targetPath = getRoleTargetPath(session.role ?? 'admin', currentPath, { isEmbeddedInCPAMC });
-      window.history.replaceState(null, '', appPath(targetPath) + cpamcEmbedSearch());
+      // Preserve credential deep-link query/hash only when login keeps the same credential route.
+      const keepCredentialSearch = targetPath === currentPath && (targetPath === '/auth-files' || targetPath === '/ai-provider');
+      const suffix = keepCredentialSearch ? window.location.search + window.location.hash : cpamcEmbedSearch();
+      window.history.replaceState(null, '', appPath(targetPath) + suffix);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         setAdminLoginError(t('auth.invalid_password'));
@@ -197,7 +207,7 @@ function App() {
       ? <KeyAnalysisPage apiKey={sessionAPIKey} onNavigate={handleKeyViewerNavigate} onAuthRequired={clearSession} />
       : keyViewerPath === '/key-ranking'
         ? <KeyRankingPage apiKey={sessionAPIKey} onNavigate={handleKeyViewerNavigate} onAuthRequired={clearSession} />
-        : <KeyOverviewPage apiKey={sessionAPIKey} onNavigate={handleKeyViewerNavigate} onAuthRequired={clearSession} />;
+        : <KeyOverviewPage page={keyViewerPath === '/key-realtime' ? 'realtime' : 'overview'} apiKey={sessionAPIKey} onNavigate={handleKeyViewerNavigate} onAuthRequired={clearSession} />;
   } else {
     page = <UsagePage onAuthRequired={clearSession} />;
   }

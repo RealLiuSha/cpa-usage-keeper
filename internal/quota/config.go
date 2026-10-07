@@ -24,6 +24,8 @@ const (
 	// CodexRateLimitResetCreditsURL 返回当前账号每次可用 reset credit 及其过期时间。
 	CodexRateLimitResetCreditsURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 
+	CodexSubscriptionsURL = "https://chatgpt.com/backend-api/subscriptions"
+
 	// xaiGrokClientVersion 与 CPA 当前 Grok CLI chat-proxy 请求保持一致。
 	xaiGrokClientVersion = "0.2.93"
 )
@@ -49,6 +51,7 @@ type ProviderConfigs struct {
 	ClaudeUsage              APICallConfig
 	ClaudeProfile            APICallConfig
 	Kimi                     APICallConfig
+	KimiAI                   APICallConfig
 	XAIWeekly                APICallConfig
 	XAIMonthly               APICallConfig
 }
@@ -154,6 +157,13 @@ func DefaultProviderConfigs() ProviderConfigs {
 				"Authorization": "Bearer $TOKEN$",
 			},
 		},
+		KimiAI: APICallConfig{
+			Method: "GET",
+			URL:    "https://api.kimi.ai/coding/v1/usages",
+			Headers: map[string]string{
+				"Authorization": "Bearer $TOKEN$",
+			},
+		},
 		XAIWeekly: APICallConfig{
 			Method:  "GET",
 			URL:     "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
@@ -179,7 +189,7 @@ func xaiRequestHeaders() map[string]string {
 }
 
 func (c ProviderConfigs) APICallTemplates() []APICallConfig {
-	templates := make([]APICallConfig, 0, len(c.Antigravity)+len(c.AntigravitySubscriptions)+8)
+	templates := make([]APICallConfig, 0, len(c.Antigravity)+len(c.AntigravitySubscriptions)+9)
 	templates = append(templates, c.Antigravity...)
 	templates = append(templates, c.AntigravitySubscriptions...)
 	templates = append(templates,
@@ -189,6 +199,7 @@ func (c ProviderConfigs) APICallTemplates() []APICallConfig {
 		c.ClaudeUsage,
 		c.ClaudeProfile,
 		c.Kimi,
+		c.KimiAI,
 		c.XAIWeekly,
 		c.XAIMonthly,
 	)

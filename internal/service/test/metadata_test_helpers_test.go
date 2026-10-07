@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"cpa-usage-keeper/internal/config"
 	"cpa-usage-keeper/internal/cpa/dto/authfiles"
@@ -14,6 +15,7 @@ import (
 	"cpa-usage-keeper/internal/cpa/dto/response"
 	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/repository"
+	"cpa-usage-keeper/internal/service"
 	"gorm.io/gorm"
 )
 
@@ -78,7 +80,7 @@ func newMetadataTestFetcher() *metadataTestFetcher {
 		openAIResult: &response.OpenAICompatibilityResult{StatusCode: 200, Payload: []providerconfig.OpenAICompatibilityConfig{}},
 	}
 	// 六个标准 endpoint 都显式设置为 200 空 payload。
-	for _, source := range []string{"codex", "xai", "gemini", "gemini-interactions", "claude", "vertex"} {
+	for _, source := range []string{"codex", "xai", "gemini", "gemini-interactions", "claude", "vertex", "meta"} {
 		// 每个 source 使用独立 result 指针，测试可以只替换目标来源。
 		fetcher.standardResults[source] = &response.ProviderKeyConfigResult{StatusCode: 200, Payload: []providerconfig.ProviderKeyConfig{}}
 	}
@@ -185,6 +187,19 @@ func (f *metadataTestFetcher) FetchClaudeAPIKeys(ctx context.Context) (*response
 func (f *metadataTestFetcher) FetchVertexAPIKeys(ctx context.Context) (*response.ProviderKeyConfigResult, error) {
 	// Vertex 使用标准 provider 分派。
 	return f.fetchStandardProvider(ctx, "vertex")
+}
+
+// FetchMetaAPIKeys 读取新增的 Meta provider endpoint。
+func (f *metadataTestFetcher) FetchMetaAPIKeys(ctx context.Context) (*response.ProviderKeyConfigResult, error) {
+	return f.fetchStandardProvider(ctx, "meta")
+}
+
+func newMetadataTestSyncer(db *gorm.DB, fetcher *metadataTestFetcher, now func() time.Time) *service.SyncService {
+	return service.NewSyncServiceWithOptions(db, service.SyncServiceOptions{
+		BaseURL:         "https://cpa.example.com",
+		MetadataFetcher: fetcher,
+		Now:             now,
+	})
 }
 
 // FetchOpenAICompatibility 返回 OpenAI Compatibility 专属结果。

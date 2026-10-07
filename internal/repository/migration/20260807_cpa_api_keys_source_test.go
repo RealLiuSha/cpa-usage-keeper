@@ -2,6 +2,7 @@ package migration
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,34 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func closeOpenedDatabase(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close database: %v", err)
+	}
+}
+
+func testSQLiteDSN(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if strings.Contains(trimmed, "?") {
+		return trimmed
+	}
+	return trimmed + "?_busy_timeout=5000&_foreign_keys=on"
+}
+
+func sqliteIndexExists(t *testing.T, db *gorm.DB, indexName string) bool {
+	t.Helper()
+	var count int64
+	if err := db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?", indexName).Scan(&count).Error; err != nil {
+		t.Fatalf("check sqlite index %s: %v", indexName, err)
+	}
+	return count == 1
+}
 
 func TestAddCPAAPIKeysSourceMigrationAddsColumnsBackfillAndIndex(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(testSQLiteDSN(filepath.Join(t.TempDir(), "cpa-api-keys-source.db"))), &gorm.Config{})

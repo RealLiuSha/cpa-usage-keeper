@@ -27,7 +27,7 @@ func (s *SyncService) SyncMetadata(ctx context.Context) error {
 	apiKeysResult, apiKeysErr := s.metadataFetcher.FetchManagementAPIKeys(ctx)
 	// key-policy catalog：未安装插件时 404/501 走 absent，失败不阻断已提交的 native。
 	keyPolicyResult, keyPolicyErr := s.metadataFetcher.FetchKeyPolicyKeys(ctx)
-	// 七个 provider endpoint 只在纯包内并发，返回按 registry 确定性归并的 snapshot。
+	// 八个 provider endpoint 只在纯包内并发，返回按 registry 确定性归并的 snapshot。
 	providerSnapshot, providerFetchErr := providermetadata.Fetch(ctx, s.metadataFetcher)
 	// Auth Files 先进入自己的 repository 事务，保持原有写入顺序。
 	authSyncErr := syncAuthFiles(ctx, s.db, authFilesResult, authFilesErr, fetchedAt)

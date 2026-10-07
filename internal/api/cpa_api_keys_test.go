@@ -32,7 +32,7 @@ func TestCPAAPIKeyRoutesReturnDisplayDataWithoutRawKeys(t *testing.T) {
 	}, time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("seed plugin key: %v", err)
 	}
-	router := NewRouter(nil, statusStub{}, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
 
 	resp := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/usage/api-keys", nil)
@@ -89,7 +89,7 @@ func TestCPAAPIKeySettingsRouteReturnsRawKeys(t *testing.T) {
 	if err := repository.UpdateCPAAPIKeyAlias(db, 1, "Primary Key"); err != nil {
 		t.Fatalf("seed alias: %v", err)
 	}
-	router := NewRouter(nil, statusStub{}, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
 
 	resp := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/usage/api-keys/settings", nil)
@@ -130,7 +130,7 @@ func TestCPAAPIKeySettingsRouteReturnsPluginLogicalIDAndSource(t *testing.T) {
 	}, syncedAt); err != nil {
 		t.Fatalf("seed plugin: %v", err)
 	}
-	router := NewRouter(nil, statusStub{}, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
 
 	resp := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/usage/api-keys/settings", nil)
@@ -175,7 +175,7 @@ func TestCPAAPIKeyRoutesNormalizeStaleDisplayKeys(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("seed stale API key: %v", err)
 	}
-	router := NewRouter(nil, statusStub{}, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
 
 	resp := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/usage/api-keys", nil)
@@ -209,7 +209,7 @@ func TestCPAAPIKeyOptionsReturnActiveLabels(t *testing.T) {
 	if err := repository.SyncCPAAPIKeys(db, []string{"sk-alpha123456"}, time.Date(2026, 5, 13, 11, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("delete missing key: %v", err)
 	}
-	router := NewRouter(nil, statusStub{}, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
 
 	resp := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/usage/api-keys/options", nil)
@@ -220,8 +220,10 @@ func TestCPAAPIKeyOptionsReturnActiveLabels(t *testing.T) {
 	}
 	var parsed struct {
 		Options []struct {
-			ID    string `json:"id"`
-			Label string `json:"label"`
+			ID      string `json:"id"`
+			Label   string `json:"label"`
+			Source  string `json:"source"`
+			Enabled bool   `json:"enabled"`
 		} `json:"options"`
 	}
 	if err := json.Unmarshal(resp.Body.Bytes(), &parsed); err != nil {
@@ -250,7 +252,7 @@ func TestUpdateCPAAPIKeyAliasUpdatesAndClearsAlias(t *testing.T) {
 	if err := repository.SyncCPAAPIKeys(db, []string{"sk-alpha123456"}, time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("seed API keys: %v", err)
 	}
-	router := NewRouter(nil, statusStub{}, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
 
 	for _, body := range []string{`{"keyAlias":"  Primary Key  "}`, `{"keyAlias":""}`} {
 		resp := httptest.NewRecorder()
@@ -280,7 +282,7 @@ func TestUpdateCPAAPIKeyAliasRejectsInvalidInputAndDeletedRows(t *testing.T) {
 	if err := repository.SyncCPAAPIKeys(db, nil, time.Date(2026, 5, 13, 11, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("mark deleted: %v", err)
 	}
-	router := NewRouter(nil, statusStub{}, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{CPAAPIKeys: service.NewCPAAPIKeyService(db)})
 
 	for _, tc := range []struct {
 		name string
@@ -326,7 +328,7 @@ func TestAuthAPIKeyLoginRejectsPluginLogicalIDAndAcceptsNative(t *testing.T) {
 
 	sessions := auth.NewSessionManager(time.Hour)
 	config := AuthConfig{Enabled: true, LoginPassword: "secret", SessionTTL: time.Hour}
-	router := NewRouter(nil, statusStub{}, nil, nil, config, NewAuthHandler(config, sessions), "", OptionalProviders{
+	router := NewRouter(nil, nil, nil, nil, config, NewAuthHandler(config, sessions), "", OptionalProviders{
 		CPAAPIKeys: service.NewCPAAPIKeyService(db),
 	})
 

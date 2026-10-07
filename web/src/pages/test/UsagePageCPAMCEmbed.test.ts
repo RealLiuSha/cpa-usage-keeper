@@ -7,11 +7,11 @@ describe('UsagePage CPAMC embed behavior', () => {
   it('does not render the Back to CPA link in CPAMC embed mode', () => {
     expect(usagePageSource).toMatch(/import \{[^}]*\bisCPAMCEmbed\b[^}]*\} from '@\/embed\/cpamcEmbed';/);
     expect(usagePageSource).toMatch(/const isEmbeddedInCPAMC = isCPAMCEmbed\(\);/);
-    expect(usagePageSource).toMatch(/\{\(!isEmbeddedInCPAMC && !shareMode && cpaManagementURL\) && \(/);
+    expect(usagePageSource).toMatch(/backToCPA=\{!shareMode \? cpaManagementURL \|\| undefined : undefined\}/);
   });
 
   it('does not render the Back to CPA link in unauthenticated share mode', () => {
-    expect(usagePageSource).toMatch(/\{\(!isEmbeddedInCPAMC && !shareMode && cpaManagementURL\) && \(/);
+    expect(usagePageSource).toMatch(/backToCPA=\{!shareMode \? cpaManagementURL \|\| undefined : undefined\}/);
     expect(usagePageSource).toContain('shareMode');
   });
 

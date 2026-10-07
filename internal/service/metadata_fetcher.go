@@ -7,7 +7,7 @@ import (
 	"cpa-usage-keeper/internal/service/providermetadata"
 )
 
-// MetadataFetcher 汇总 Auth Files、管理 API Keys、key-policy catalog 与七个 provider endpoint 的只读依赖。
+// MetadataFetcher 汇总 Auth Files、管理 API Keys、key-policy catalog 与八个 provider endpoint 的只读依赖。
 type MetadataFetcher interface {
 	// FetchAuthFiles 读取 CPA OAuth/Auth File metadata。
 	FetchAuthFiles(context.Context) (*response.AuthFilesResult, error)
@@ -15,7 +15,7 @@ type MetadataFetcher interface {
 	FetchManagementAPIKeys(context.Context) (*response.ManagementAPIKeysResult, error)
 	// FetchKeyPolicyKeys 读取 cpa-plugin-key-policy public catalog（未安装时可能 404/501）。
 	FetchKeyPolicyKeys(context.Context) (*response.KeyPolicyKeysResult, error)
-	// Fetcher 嵌入 provider 纯包定义的固定七来源接口，避免 service 再维护第二份列表。
+	// Fetcher 嵌入 provider 纯包定义的固定八来源接口，避免 service 再维护第二份列表。
 	providermetadata.Fetcher
 }
 

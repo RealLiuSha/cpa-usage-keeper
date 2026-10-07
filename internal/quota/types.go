@@ -11,6 +11,11 @@ type ManagementAPICaller interface {
 	CallManagementAPI(context.Context, apicall.Request) (*apicall.Response, error)
 }
 
+type ManagementClient interface {
+	ManagementAPICaller
+	ResetQuota(context.Context, string) error
+}
+
 type ProviderInput struct {
 	Identity entities.UsageIdentity
 }
@@ -21,8 +26,9 @@ type ProviderOutput struct {
 }
 
 type ProviderResetOutput struct {
-	Code         string `json:"code,omitempty"`
-	WindowsReset int    `json:"windowsReset,omitempty"`
+	Code           string `json:"code,omitempty"`
+	WindowsReset   int    `json:"windowsReset,omitempty"`
+	RecoveryFailed bool   `json:"recoveryFailed,omitempty"`
 }
 
 type ProviderResetter interface {
@@ -183,6 +189,8 @@ type AntigravitySubscriptionPayload struct {
 type ClaudeUsageWindow struct {
 	Utilization float64 `json:"utilization,omitempty"`
 	ResetsAt    string  `json:"resetsAt,omitempty"`
+	// 仅历史采样使用；零值 utilization 必须由上游明确给出。
+	HasUtilization bool `json:"-"`
 }
 
 type ClaudeExtraUsage struct {
@@ -260,8 +268,18 @@ type KimiLimitItem struct {
 }
 
 type KimiUsagePayload struct {
-	Usage  *KimiUsageDetail `json:"usage,omitempty"`
-	Limits []KimiLimitItem  `json:"limits,omitempty"`
+	Usage  *KimiUsageDetail    `json:"usage,omitempty"`
+	Limits []KimiLimitItem     `json:"limits,omitempty"`
+	Usages *KimiAggregateUsage `json:"usages,omitempty"`
+}
+
+type KimiAggregateUsage struct {
+	MonthTotal *KimiUsageRatio `json:"limit_month_total,omitempty"`
+}
+
+type KimiUsageRatio struct {
+	UsedRatio float64 `json:"used_ratio"`
+	ResetTime string  `json:"reset_time,omitempty"`
 }
 
 type XAIMoneyValue struct {

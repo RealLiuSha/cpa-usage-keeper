@@ -48,91 +48,100 @@ func SyncCPAAPIKeys(db *gorm.DB, keys []string, syncedAt time.Time) error {
 		uniqueKeys = append(uniqueKeys, key)
 	}
 
-	return db.Transaction(func(tx *gorm.DB) error {
-		var existingRows []struct {
-			ID        int64
-			APIKey    string
-			Source    string
-			IsDeleted bool
-		}
-		// Full-table scan: unique index has no is_deleted, so soft-deleted rows still occupy api_key.
-		if err := tx.Model(&entities.CPAAPIKey{}).Select("id, api_key, source, is_deleted").Find(&existingRows).Error; err != nil {
-			return err
-		}
-
-		existingByKey := make(map[string]struct {
-			ID        int64
-			Source    string
-			IsDeleted bool
-		}, len(existingRows))
-		for _, row := range existingRows {
-			existingByKey[row.APIKey] = struct {
-				ID        int64
-				Source    string
-				IsDeleted bool
-			}{ID: row.ID, Source: row.Source, IsDeleted: row.IsDeleted}
-		}
-
-		incoming := make(map[string]struct{}, len(uniqueKeys))
-		toCreate := make([]entities.CPAAPIKey, 0)
-		for _, key := range uniqueKeys {
-			incoming[key] = struct{}{}
-			if existing, ok := existingByKey[key]; ok {
-				if !entities.IsNativeCPAAPIKeySource(existing.Source) {
-					// first-writer-wins on uniq api_key; see goals/key-policy-review-fixes/decisions.md D1.
-					// Never flip a plugin-owned row to native.
-					logrus.WithFields(logrus.Fields{
-						"api_key": helper.RedactSensitiveValue(key),
-						"source":  existing.Source,
-					}).Error("native api key sync skipped row owned by non-native source")
-					continue
-				}
-				updates := map[string]any{
-					"display_key":    helper.RedactSensitiveValue(key),
-					"source":         entities.CPAAPIKeySourceNative,
-					"enabled":        true,
-					"is_deleted":     false,
-					"last_synced_at": &syncedAt,
-					"updated_at":     syncedAt,
-				}
-				if err := tx.Model(&entities.CPAAPIKey{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
-					return err
-				}
+	var existingRows []struct {
+		ID           int64
+		APIKey       string
+		DisplayKey   string
+		Source       string
+		Enabled      bool
+		IsDeleted    bool
+		LastSyncedAt *time.Time `gorm:"serializer:storageTime"`
+	}
+	// Compare the full native/plugin identity set through the reader before opening a writer transaction.
+	if err := db.Clauses(dbresolver.Read).Model(&entities.CPAAPIKey{}).
+		Select("id, api_key, display_key, source, enabled, is_deleted, last_synced_at").Find(&existingRows).Error; err != nil {
+		return err
+	}
+	type keyUpdate struct {
+		id     int64
+		fields map[string]any
+	}
+	existingByKey := make(map[string]int, len(existingRows))
+	for index, row := range existingRows {
+		existingByKey[row.APIKey] = index
+	}
+	incoming := make(map[string]struct{}, len(uniqueKeys))
+	toCreate := make([]entities.CPAAPIKey, 0)
+	toUpdate := make([]keyUpdate, 0)
+	for _, key := range uniqueKeys {
+		incoming[key] = struct{}{}
+		if index, ok := existingByKey[key]; ok {
+			row := existingRows[index]
+			if !entities.IsNativeCPAAPIKeySource(row.Source) {
+				// First-writer-wins on the unique api_key: never flip a plugin row to native.
+				logrus.WithFields(logrus.Fields{
+					"api_key": helper.RedactSensitiveValue(key),
+					"source":  row.Source,
+				}).Error("native api key sync skipped row owned by non-native source")
 				continue
 			}
-			toCreate = append(toCreate, entities.CPAAPIKey{
-				APIKey:       key,
-				DisplayKey:   helper.RedactSensitiveValue(key),
-				Source:       entities.CPAAPIKeySourceNative,
-				Enabled:      true,
-				IsDeleted:    false,
-				LastSyncedAt: &syncedAt,
-			})
+			fields := make(map[string]any)
+			if row.Source != entities.CPAAPIKeySourceNative {
+				fields["source"] = entities.CPAAPIKeySourceNative
+			}
+			if !row.Enabled {
+				fields["enabled"] = true
+			}
+			if row.IsDeleted {
+				fields["is_deleted"] = false
+			}
+			if display := helper.RedactSensitiveValue(key); row.DisplayKey != display {
+				fields["display_key"] = display
+			}
+			if len(fields) > 0 {
+				fields["last_synced_at"] = &syncedAt
+				fields["updated_at"] = syncedAt
+				toUpdate = append(toUpdate, keyUpdate{id: row.ID, fields: fields})
+			}
+			continue
+		}
+		toCreate = append(toCreate, entities.CPAAPIKey{
+			APIKey:       key,
+			DisplayKey:   helper.RedactSensitiveValue(key),
+			Source:       entities.CPAAPIKeySourceNative,
+			Enabled:      true,
+			IsDeleted:    false,
+			LastSyncedAt: &syncedAt,
+		})
+	}
+	staleIDs := make([]int64, 0)
+	for _, row := range existingRows {
+		if row.IsDeleted || !entities.IsNativeCPAAPIKeySource(row.Source) {
+			continue
+		}
+		if _, ok := incoming[row.APIKey]; !ok {
+			staleIDs = append(staleIDs, row.ID)
+		}
+	}
+	if len(toCreate) == 0 && len(toUpdate) == 0 && len(staleIDs) == 0 {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, change := range toUpdate {
+			if err := tx.Model(&entities.CPAAPIKey{}).Where("id = ?", change.id).Updates(change.fields).Error; err != nil {
+				return err
+			}
 		}
 		if len(toCreate) > 0 {
 			if err := tx.Create(&toCreate).Error; err != nil {
 				return err
 			}
 		}
-
-		// Stale scan only manages native rows (H1 / H8).
-		staleIDs := make([]int64, 0)
-		for _, row := range existingRows {
-			if row.IsDeleted {
-				continue
-			}
-			if !entities.IsNativeCPAAPIKeySource(row.Source) {
-				continue
-			}
-			if _, ok := incoming[row.APIKey]; ok {
-				continue
-			}
-			staleIDs = append(staleIDs, row.ID)
-		}
 		if len(staleIDs) == 0 {
 			return nil
 		}
-		return tx.Model(&entities.CPAAPIKey{}).Where("id IN ?", staleIDs).Updates(map[string]any{"is_deleted": true, "updated_at": syncedAt}).Error
+		return tx.Model(&entities.CPAAPIKey{}).Where("id IN ?", staleIDs).
+			Updates(map[string]any{"is_deleted": true, "updated_at": syncedAt}).Error
 	})
 }
 
@@ -153,121 +162,124 @@ func SyncPluginKeyPolicyKeys(db *gorm.DB, keys []PluginKeyPolicyKey, syncedAt ti
 			continue
 		}
 		seen[id] = struct{}{}
-		name := strings.TrimSpace(key.Name)
-		preview := strings.TrimSpace(key.KeyPreview)
 		uniqueKeys = append(uniqueKeys, PluginKeyPolicyKey{
 			ID:         id,
-			Name:       name,
+			Name:       strings.TrimSpace(key.Name),
 			Enabled:    key.Enabled,
-			KeyPreview: preview,
+			KeyPreview: strings.TrimSpace(key.KeyPreview),
 		})
 	}
 
-	return db.Transaction(func(tx *gorm.DB) error {
-		var existingRows []struct {
-			ID        int64
-			APIKey    string
-			Source    string
-			KeyAlias  string
-			IsDeleted bool
+	var existingRows []struct {
+		ID           int64
+		APIKey       string
+		Source       string
+		KeyAlias     string
+		DisplayKey   string
+		ExternalID   string
+		Enabled      bool
+		IsDeleted    bool
+		LastSyncedAt *time.Time `gorm:"serializer:storageTime"`
+	}
+	// Read the complete table before taking the writer so unchanged snapshots can return immediately.
+	if err := db.Clauses(dbresolver.Read).Model(&entities.CPAAPIKey{}).
+		Select("id, api_key, source, key_alias, display_key, external_id, enabled, is_deleted, last_synced_at").
+		Find(&existingRows).Error; err != nil {
+		return err
+	}
+	type pluginUpdate struct {
+		id     int64
+		fields map[string]any
+	}
+	existingByKey := make(map[string]int, len(existingRows))
+	for index, row := range existingRows {
+		existingByKey[row.APIKey] = index
+	}
+	incoming := make(map[string]struct{}, len(uniqueKeys))
+	toCreate := make([]entities.CPAAPIKey, 0)
+	toUpdate := make([]pluginUpdate, 0)
+	for _, key := range uniqueKeys {
+		incoming[key.ID] = struct{}{}
+		displayKey := key.KeyPreview
+		if displayKey == "" {
+			displayKey = key.ID
 		}
-		// Full table (H7): soft-deleted plugin rows must be found and revived, not re-INSERTed.
-		if err := tx.Model(&entities.CPAAPIKey{}).Select("id, api_key, source, key_alias, is_deleted").Find(&existingRows).Error; err != nil {
-			return err
+		defaultAlias := key.Name
+		if defaultAlias == "" {
+			defaultAlias = key.ID
 		}
 
-		existingByKey := make(map[string]struct {
-			ID        int64
-			Source    string
-			KeyAlias  string
-			IsDeleted bool
-		}, len(existingRows))
-		for _, row := range existingRows {
-			existingByKey[row.APIKey] = struct {
-				ID        int64
-				Source    string
-				KeyAlias  string
-				IsDeleted bool
-			}{ID: row.ID, Source: row.Source, KeyAlias: row.KeyAlias, IsDeleted: row.IsDeleted}
-		}
-
-		incoming := make(map[string]struct{}, len(uniqueKeys))
-		toCreate := make([]entities.CPAAPIKey, 0)
-		for _, key := range uniqueKeys {
-			incoming[key.ID] = struct{}{}
-			displayKey := key.KeyPreview
-			if displayKey == "" {
-				displayKey = key.ID
-			}
-			defaultAlias := key.Name
-			if defaultAlias == "" {
-				defaultAlias = key.ID
-			}
-
-			if existing, ok := existingByKey[key.ID]; ok {
-				if !entities.IsPluginKeyPolicySource(existing.Source) {
-					// first-writer-wins on uniq api_key; see goals/key-policy-review-fixes/decisions.md D1.
-					// Never flip a native/empty-source row to plugin.
-					logrus.WithFields(logrus.Fields{
-						"api_key": key.ID,
-						"source":  existing.Source,
-					}).Error("plugin key-policy sync skipped row owned by non-plugin source")
-					continue
-				}
-				updates := map[string]any{
-					"display_key":    displayKey,
-					"external_id":    key.ID,
-					"enabled":        key.Enabled,
-					"source":         entities.CPAAPIKeySourcePluginKeyPolicy,
-					"is_deleted":     false, // H7: revive soft-deleted plugin identity in place
-					"last_synced_at": &syncedAt,
-					"updated_at":     syncedAt,
-				}
-				// Do not overwrite a non-empty user alias.
-				if strings.TrimSpace(existing.KeyAlias) == "" {
-					updates["key_alias"] = defaultAlias
-				}
-				if err := tx.Model(&entities.CPAAPIKey{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
-					return err
-				}
+		if index, ok := existingByKey[key.ID]; ok {
+			existing := existingRows[index]
+			if !entities.IsPluginKeyPolicySource(existing.Source) {
+				// first-writer-wins on uniq api_key; never flip a native/empty-source row to plugin.
+				logrus.WithFields(logrus.Fields{"api_key": key.ID, "source": existing.Source}).Error("plugin key-policy sync skipped row owned by non-plugin source")
 				continue
 			}
+			updates := make(map[string]any)
+			if existing.DisplayKey != displayKey {
+				updates["display_key"] = displayKey
+			}
+			if existing.ExternalID != key.ID {
+				updates["external_id"] = key.ID
+			}
+			if existing.Enabled != key.Enabled {
+				updates["enabled"] = key.Enabled
+			}
+			if existing.IsDeleted {
+				updates["is_deleted"] = false
+			}
+			if strings.TrimSpace(existing.KeyAlias) == "" && existing.KeyAlias != defaultAlias {
+				updates["key_alias"] = defaultAlias
+			}
+			if len(updates) > 0 {
+				updates["last_synced_at"] = &syncedAt
+				updates["updated_at"] = syncedAt
+				toUpdate = append(toUpdate, pluginUpdate{id: existing.ID, fields: updates})
+			}
+			continue
+		}
 
-			toCreate = append(toCreate, entities.CPAAPIKey{
-				APIKey:       key.ID,
-				DisplayKey:   displayKey,
-				KeyAlias:     defaultAlias,
-				Source:       entities.CPAAPIKeySourcePluginKeyPolicy,
-				ExternalID:   key.ID,
-				Enabled:      key.Enabled,
-				IsDeleted:    false,
-				LastSyncedAt: &syncedAt,
-			})
+		toCreate = append(toCreate, entities.CPAAPIKey{
+			APIKey:       key.ID,
+			DisplayKey:   displayKey,
+			KeyAlias:     defaultAlias,
+			Source:       entities.CPAAPIKeySourcePluginKeyPolicy,
+			ExternalID:   key.ID,
+			Enabled:      key.Enabled,
+			IsDeleted:    false,
+			LastSyncedAt: &syncedAt,
+		})
+	}
+	// Stale scan only manages exact active plugin rows.
+	staleIDs := make([]int64, 0)
+	for _, row := range existingRows {
+		if row.IsDeleted || !entities.IsPluginKeyPolicySource(row.Source) {
+			continue
+		}
+		if _, ok := incoming[row.APIKey]; !ok {
+			staleIDs = append(staleIDs, row.ID)
+		}
+	}
+	if len(toCreate) == 0 && len(toUpdate) == 0 && len(staleIDs) == 0 {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, change := range toUpdate {
+			if err := tx.Model(&entities.CPAAPIKey{}).Where("id = ?", change.id).Updates(change.fields).Error; err != nil {
+				return err
+			}
 		}
 		if len(toCreate) > 0 {
 			if err := tx.Create(&toCreate).Error; err != nil {
 				return err
 			}
 		}
-
-		// Stale scan only manages exact plugin:cpa-key-policy rows (H2).
-		staleIDs := make([]int64, 0)
-		for _, row := range existingRows {
-			if row.IsDeleted {
-				continue
-			}
-			if !entities.IsPluginKeyPolicySource(row.Source) {
-				continue
-			}
-			if _, ok := incoming[row.APIKey]; ok {
-				continue
-			}
-			staleIDs = append(staleIDs, row.ID)
-		}
 		if len(staleIDs) == 0 {
 			return nil
 		}
-		return tx.Model(&entities.CPAAPIKey{}).Where("id IN ?", staleIDs).Updates(map[string]any{"is_deleted": true, "updated_at": syncedAt}).Error
+		return tx.Model(&entities.CPAAPIKey{}).Where("id IN ?", staleIDs).
+			Updates(map[string]any{"is_deleted": true, "updated_at": syncedAt}).Error
 	})
 }
 
