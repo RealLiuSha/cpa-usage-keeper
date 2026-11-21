@@ -6,11 +6,11 @@ import "time"
 type UsageIdentityAuthType int
 
 const (
-	UsageIdentityAuthTypeAuthFile   UsageIdentityAuthType = 1
+	UsageIdentityAuthTypeCredential UsageIdentityAuthType = 1
 	UsageIdentityAuthTypeAIProvider UsageIdentityAuthType = 2
 )
 
-// UsageIdentity 是从 CPA auth_files 和 provider config 同步出的 usage source 身份实体。
+// UsageIdentity 是从 CPA credentials 和 provider config 同步出的 usage source 身份实体。
 type UsageIdentity struct {
 	ID           int64  `gorm:"primaryKey;index:idx_usage_identities_auth_type_name_id,priority:3"`
 	Name         string `gorm:"index:idx_usage_identities_auth_type_name_id,priority:2"`
@@ -31,6 +31,12 @@ type UsageIdentity struct {
 	AccountID    *string
 	ProjectID    *string
 	XAIUserID    *string
+
+	SIWCBindSupported *bool      `gorm:"column:siwc_bind_supported"`
+	SIWCBound         *bool      `gorm:"column:siwc_bound"`
+	UseSIWC           *bool      `gorm:"column:use_siwc"`
+	SIWCStatus        *string    `gorm:"column:siwc_status"`
+	SIWCExpiresAt     *time.Time `gorm:"column:siwc_expires_at;serializer:storageTime"`
 
 	ActiveStart *time.Time `gorm:"serializer:storageTime"`
 	ActiveUntil *time.Time `gorm:"serializer:storageTime"`

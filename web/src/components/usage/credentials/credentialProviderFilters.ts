@@ -1,7 +1,7 @@
 import type { UsageIdentityTypeCount } from '@/lib/types'
 import type { ProviderBrandIconKey } from '@/components/ProviderBrandIcon'
 
-export type CredentialProviderFilterScope = 'auth-files' | 'ai-provider'
+export type CredentialProviderFilterScope = 'credentials' | 'ai-provider'
 export type KnownCredentialProviderFilterKey = ProviderBrandIconKey
 export type CredentialProviderFilterKey = 'all' | KnownCredentialProviderFilterKey
 
@@ -18,14 +18,15 @@ interface KnownCredentialProviderFilter {
   types: string[]
 }
 
-const AUTH_FILE_PROVIDER_FILTERS: KnownCredentialProviderFilter[] = [
+const CREDENTIAL_PROVIDER_FILTERS: KnownCredentialProviderFilter[] = [
   { key: 'antigravity', labelKey: 'usage_stats.credentials_filter_antigravity', types: ['antigravity'] },
   { key: 'claude', labelKey: 'usage_stats.credentials_filter_claude', types: ['claude'] },
   { key: 'codex', labelKey: 'usage_stats.credentials_filter_codex', types: ['codex'] },
   { key: 'devin', labelKey: 'usage_stats.credentials_filter_devin', types: ['devin'] },
-  // Gemini Auth File 兼容 CPA 的原始与 CLI type，并统一复用 Gemini 品牌筛选。
+  // Gemini Credential 兼容 CPA 的原始与 CLI type，并统一复用 Gemini 品牌筛选。
   { key: 'gemini', labelKey: 'usage_stats.credentials_filter_gemini', types: ['gemini', 'gemini-cli'] },
   { key: 'kimi', labelKey: 'usage_stats.credentials_filter_kimi', types: ['kimi', 'kimi-ai', 'kimi.ai', 'kimi.com'] },
+  { key: 'meta', labelKey: 'usage_stats.credentials_filter_meta', types: ['meta'] },
   { key: 'xai', labelKey: 'usage_stats.credentials_filter_xai', types: ['xai'] },
   { key: 'vertex', labelKey: 'usage_stats.credentials_filter_vertex', types: ['vertex'] },
 ]
@@ -42,7 +43,7 @@ const AI_PROVIDER_FILTERS: KnownCredentialProviderFilter[] = [
 ]
 
 const FILTERS_BY_SCOPE: Record<CredentialProviderFilterScope, KnownCredentialProviderFilter[]> = {
-  'auth-files': AUTH_FILE_PROVIDER_FILTERS,
+  'credentials': CREDENTIAL_PROVIDER_FILTERS,
   'ai-provider': AI_PROVIDER_FILTERS,
 }
 
@@ -57,7 +58,7 @@ export function credentialProviderFilterTypes(scope: CredentialProviderFilterSco
   return credentialProviderFiltersForScope(scope).find((item) => item.key === filter)?.types ?? []
 }
 
-// 恢复持久化筛选时使用：跨分区（例如 Auth 文件独有的 antigravity）或未知的 key 一律回落到 all。
+// 恢复持久化筛选时使用：跨分区（例如 凭证独有的 antigravity）或未知的 key 一律回落到 all。
 export function normalizeCredentialProviderFilterKey(scope: CredentialProviderFilterScope, value: unknown): CredentialProviderFilterKey {
   if (typeof value !== 'string' || value === 'all') {
     return 'all'

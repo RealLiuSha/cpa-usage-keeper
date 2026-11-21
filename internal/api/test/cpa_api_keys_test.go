@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -152,17 +153,13 @@ func TestCPAAPIKeyOptionsReturnActiveLabels(t *testing.T) {
 		t.Fatalf("expected status 200, got %d body=%s", resp.Code, resp.Body.String())
 	}
 	var parsed struct {
-		Options []struct {
-			ID      string `json:"id"`
-			Label   string `json:"label"`
-			Source  string `json:"source"`
-			Enabled bool   `json:"enabled"`
-		} `json:"options"`
+		Options []map[string]string `json:"options"`
 	}
 	if err := json.Unmarshal(resp.Body.Bytes(), &parsed); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(parsed.Options) != 1 || parsed.Options[0].ID != "1" || parsed.Options[0].Label != "Primary Key" || parsed.Options[0].Source != entities.CPAAPIKeySourceNative || !parsed.Options[0].Enabled {
+	want := []map[string]string{{"id": "1", "label": "Primary Key"}}
+	if !reflect.DeepEqual(parsed.Options, want) {
 		t.Fatalf("options must expose only active ids and labels, got %+v", parsed.Options)
 	}
 }

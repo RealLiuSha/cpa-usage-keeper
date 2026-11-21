@@ -14,8 +14,4 @@ describe('UsagePage CPAMC embed behavior', () => {
     expect(usagePageSource).toMatch(/backToCPA=\{!shareMode \? cpaManagementURL \|\| undefined : undefined\}/);
     expect(usagePageSource).toContain('shareMode');
   });
-
-  it('marks ranking as readOnly in share mode so local avatars are not edit buttons', () => {
-    expect(usagePageSource).toContain('readOnly={shareMode}');
-  });
 });

@@ -29,7 +29,11 @@ func TestProcessRedisUsageInboxBatchesProcessedMarks(t *testing.T) {
 	var queries strings.Builder
 	loggedDB := db.Session(&gorm.Session{Logger: gormlogger.New(log.New(&queries, "", 0), gormlogger.Config{LogLevel: gormlogger.Info})})
 	notifier := &recordingUsageAggregationNotifier{}
-	syncService := service.NewSyncServiceWithOptions(loggedDB, service.SyncServiceOptions{
+	live := service.NewUsageEventsNotifier()
+	wake, unsubscribe := live.Subscribe()
+	defer unsubscribe()
+	syncService := service.NewSyncServiceWithOptions(loggedDB, service.SyncServiceOptions{PricingCatalog: emptyPricingCatalogForTest(),
+		UsageEventsLive:          live,
 		BaseURL:                  "https://cpa.example.com",
 		Now:                      func() time.Time { return now },
 		UsageAggregationNotifier: notifier,
@@ -40,6 +44,11 @@ func TestProcessRedisUsageInboxBatchesProcessedMarks(t *testing.T) {
 	}
 	if result == nil || result.InsertedEvents != rowCount {
 		t.Fatalf("expected %d inserted events, got %+v", rowCount, result)
+	}
+	select {
+	case <-wake:
+	default:
+		t.Fatal("committed batch did not wake live subscriber")
 	}
 	if updates := strings.Count(queries.String(), "UPDATE `redis_usage_inboxes`"); updates != 2 {
 		t.Fatalf("expected 2 batched inbox UPDATE statements, got %d", updates)
@@ -87,7 +96,11 @@ func TestProcessRedisUsageInboxRollsBackAllChunksWhenLaterProcessedMarkFails(t *
 	}
 
 	notifier := &recordingUsageAggregationNotifier{}
-	syncService := service.NewSyncServiceWithOptions(db, service.SyncServiceOptions{
+	live := service.NewUsageEventsNotifier()
+	wake, unsubscribe := live.Subscribe()
+	defer unsubscribe()
+	syncService := service.NewSyncServiceWithOptions(db, service.SyncServiceOptions{PricingCatalog: emptyPricingCatalogForTest(),
+		UsageEventsLive:          live,
 		BaseURL:                  "https://cpa.example.com",
 		Now:                      func() time.Time { return now },
 		UsageAggregationNotifier: notifier,
@@ -98,6 +111,11 @@ func TestProcessRedisUsageInboxRollsBackAllChunksWhenLaterProcessedMarkFails(t *
 	}
 	if notifier.usageCalls != 0 {
 		t.Fatalf("expected no commit notification after rollback, got %d", notifier.usageCalls)
+	}
+	select {
+	case <-wake:
+		t.Fatal("rollback woke live subscriber")
+	default:
 	}
 	var eventCount int64
 	if err := db.Model(&entities.UsageEvent{}).Count(&eventCount).Error; err != nil {
@@ -129,7 +147,7 @@ func redisInboxBatchInputs(prefix string, rowCount int, poppedAt time.Time) []re
 		inputs = append(inputs, repositorydto.RedisInboxInsert{
 			Source: "redis_subscribe:usage",
 			RawMessage: fmt.Sprintf(
-				`{"timestamp":"2026-07-23T09:59:00Z","provider":"OpenAI","auth_type":"api_key","auth_index":"batch-auth","model":"gpt-5.6","request_id":"%s-%d","executor_type":"CodexExecutor","tokens":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}`,
+				`{"timestamp":"2026-07-23T09:59:00Z","provider":"OpenAI","auth_type":"api_key","auth_index":"batch-auth","model":"gpt-5.6","execution_id":"fixture-execution","request_id":"%s-%d","executor_type":"CodexExecutor","tokens":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}`,
 				prefix,
 				i,
 			),

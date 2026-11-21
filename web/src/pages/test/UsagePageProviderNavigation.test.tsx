@@ -23,10 +23,10 @@ import { UsagePage } from '../UsagePage';
 describe('credential provider navigation', () => {
   let container: HTMLDivElement;
   let root: Root;
-  const save = (scope: 'auth-files' | 'ai-provider', providerFilter: string) => {
+  const save = (scope: 'credentials' | 'ai-provider', providerFilter: string) => {
     localStorage.setItem(CREDENTIAL_LIST_PREFERENCES_STORAGE_KEYS[scope], JSON.stringify({ version: 1, sort: 'last_used_at', pageSize: 10, providerFilter }));
   };
-  const saved = (scope: 'auth-files' | 'ai-provider') => JSON.parse(localStorage.getItem(CREDENTIAL_LIST_PREFERENCES_STORAGE_KEYS[scope])!).providerFilter;
+  const saved = (scope: 'credentials' | 'ai-provider') => JSON.parse(localStorage.getItem(CREDENTIAL_LIST_PREFERENCES_STORAGE_KEYS[scope])!).providerFilter;
   const provider = () => new URLSearchParams(window.location.search).get('provider');
   const select = async (label: string) => {
     const button = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button')).find((node) => node.textContent?.startsWith(label));
@@ -50,7 +50,7 @@ describe('credential provider navigation', () => {
     await i18n.changeLanguage('en');
     localStorage.clear();
     window.__APP_BASE_PATH__ = '/cpa';
-    window.history.replaceState(null, '', '/cpa/auth-files');
+    window.history.replaceState(null, '', '/cpa/credentials');
     api.fetchUsageIdentitiesPage.mockReset().mockResolvedValue({ identities: [], total_count: 0, total_pages: 0,
       type_counts: [{ type: 'codex', count: 2 }, { type: 'claude', count: 3 }] });
     container = document.createElement('div');
@@ -67,7 +67,7 @@ describe('credential provider navigation', () => {
     vi.restoreAllMocks();
   });
 
-  it.each(['auth-files', 'ai-provider'] as const)('pins the default and manual selections for %s across reloads and other tabs', async (scope) => {
+  it.each(['credentials', 'ai-provider'] as const)('pins the default and manual selections for %s across reloads and other tabs', async (scope) => {
     save(scope, 'claude');
     window.history.replaceState(null, '', `/cpa/${scope}?embed=cpamc&other=keep#details`);
     const historyLength = window.history.length;
@@ -93,9 +93,9 @@ describe('credential provider navigation', () => {
   });
 
   it('keeps independent page selections in navigation links and when returning to a page', async () => {
-    save('auth-files', 'claude');
+    save('credentials', 'claude');
     save('ai-provider', 'claude');
-    window.history.replaceState(null, '', '/cpa/auth-files?provider=codex&embed=cpamc');
+    window.history.replaceState(null, '', '/cpa/credentials?provider=codex&embed=cpamc');
     await act(async () => root.render(<UsagePage />));
     expect(provider()).toBe('codex');
     expect(container.querySelector('a[href="/cpa/ai-provider?embed=cpamc&provider=claude"]')).not.toBeNull();
@@ -103,37 +103,69 @@ describe('credential provider navigation', () => {
     await navigate('ai-provider');
     expect(provider()).toBe('claude');
     await select('All');
-    save('auth-files', 'all');
-    await navigate('auth-files');
+    save('credentials', 'all');
+    await navigate('credentials');
     expect(provider()).toBe('codex');
-    expect(saved('auth-files')).toBe('all');
+    expect(saved('credentials')).toBe('all');
     await reload();
     expect(provider()).toBe('codex');
   });
 
+  it.each(['en', 'zh', 'zh-TW'])('keeps Meta as the filter identity while showing Muse only for credentials in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    api.fetchUsageIdentitiesPage.mockResolvedValue({ identities: [], total_count: 0, total_pages: 0,
+      type_counts: [{ type: 'meta', count: 3 }, { type: 'codex', count: 2 }] });
+    window.history.replaceState(null, '', '/cpa/credentials?embed=cpamc');
+    await act(async () => root.render(<UsagePage />));
+
+    const filter = (name: string) => Array.from(container.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'))
+      .find((button) => button.textContent?.startsWith(name));
+    expect(filter('Muse')?.querySelector('[data-provider-brand-icon="muse"]')).toBeTruthy();
+    await select('Muse');
+    expect(provider()).toBe('meta');
+    expect(saved('credentials')).toBe('meta');
+    expect(api.fetchUsageIdentitiesPage.mock.lastCall?.[1]).toMatchObject({ authType: 1, types: ['meta'] });
+
+    await navigate('ai-provider');
+    expect(filter('Meta')?.querySelector('[data-provider-brand-icon="meta"]')).toBeTruthy();
+    expect(filter('Muse')).toBeUndefined();
+    await select('Meta');
+    expect(provider()).toBe('meta');
+    expect(saved('ai-provider')).toBe('meta');
+    expect(api.fetchUsageIdentitiesPage.mock.lastCall?.[1]).toMatchObject({ authType: 2, types: ['meta'] });
+
+    await navigate('credentials');
+    expect(provider()).toBe('meta');
+    expect(filter('Muse')?.getAttribute('aria-pressed')).toBe('true');
+    await reload();
+    expect(provider()).toBe('meta');
+    expect(filter('Muse')?.getAttribute('aria-pressed')).toBe('true');
+    expect(new URLSearchParams(window.location.search).get('embed')).toBe('cpamc');
+  });
+
   it('restores the remembered credential page at the root without treating its query as a provider link', async () => {
-    localStorage.setItem('cli-proxy-usage-tab-v1', 'auth-files');
-    save('auth-files', 'claude');
+    localStorage.setItem('cli-proxy-usage-tab-v2', 'credentials');
+    save('credentials', 'claude');
     window.history.replaceState(null, '', '/cpa/?provider=codex');
     await act(async () => root.render(<UsagePage />));
-    expect(window.location.pathname).toBe('/cpa/auth-files');
+    expect(window.location.pathname).toBe('/cpa/credentials');
     expect(provider()).toBe('claude');
   });
 
-  it.each(['', '?provider=unknown', '?provider=openai'])('normalizes an absent or invalid Auth Files provider: %s', async (search) => {
-    window.history.replaceState(null, '', `/cpa/auth-files${search}`);
+  it.each(['', '?provider=unknown', '?provider=openai'])('normalizes an absent or invalid Credentials provider: %s', async (search) => {
+    window.history.replaceState(null, '', `/cpa/credentials${search}`);
     await act(async () => root.render(<UsagePage />));
     expect(provider()).toBe('all');
-    expect(localStorage.getItem(CREDENTIAL_LIST_PREFERENCES_STORAGE_KEYS['auth-files'])).toBeNull();
+    expect(localStorage.getItem(CREDENTIAL_LIST_PREFERENCES_STORAGE_KEYS['credentials'])).toBeNull();
   });
 
   it('keeps a valid linked provider selected even when it has no credentials', async () => {
-    save('auth-files', 'claude');
-    window.history.replaceState(null, '', '/cpa/auth-files?provider=codex');
+    save('credentials', 'claude');
+    window.history.replaceState(null, '', '/cpa/credentials?provider=codex');
     api.fetchUsageIdentitiesPage.mockResolvedValue({ identities: [], total_count: 0, total_pages: 0, type_counts: [{ type: 'claude', count: 3 }] });
     await act(async () => root.render(<UsagePage />));
     expect(provider()).toBe('codex');
-    expect(saved('auth-files')).toBe('claude');
+    expect(saved('credentials')).toBe('claude');
     expect(container.querySelector('[role="toolbar"] [aria-pressed="true"]')?.textContent).toBe('Codex0');
     expect(api.fetchUsageIdentitiesPage.mock.calls.every(([, options]) => options.types.join() === 'codex')).toBe(true);
   });

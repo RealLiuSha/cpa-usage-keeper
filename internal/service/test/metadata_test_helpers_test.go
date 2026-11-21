@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"cpa-usage-keeper/internal/config"
-	"cpa-usage-keeper/internal/cpa/dto/authfiles"
 	"cpa-usage-keeper/internal/cpa/dto/cpaapikeys"
+	"cpa-usage-keeper/internal/cpa/dto/credentials"
 	"cpa-usage-keeper/internal/cpa/dto/providerconfig"
 	"cpa-usage-keeper/internal/cpa/dto/response"
 	"cpa-usage-keeper/internal/entities"
@@ -27,15 +27,10 @@ type openAIMetadataHook func(context.Context) (*response.OpenAICompatibilityResu
 
 // metadataTestFetcher 是七来源并发安全的函数式测试 fetcher，默认所有 endpoint 成功返回空列表。
 type metadataTestFetcher struct {
-	// callsMu 保护并发 provider goroutine 写入调用次数。
-	callsMu sync.Mutex
-	// calls 按稳定 endpoint 名记录本轮实际调用次数。
-	calls map[string]int
-	// authFilesResult 保存 Auth Files 的直接响应。
-	authFilesResult *response.AuthFilesResult
-	// authFilesErr 注入 Auth Files fetch failure。
-	authFilesErr error
-	// managementAPIKeysResult 保存管理 API Keys 的直接响应。
+	callsMu                 sync.Mutex
+	calls                   map[string]int
+	credentialsResult       *response.CredentialsResult
+	credentialsErr          error
 	managementAPIKeysResult *response.ManagementAPIKeysResult
 	// managementAPIKeysErr 注入管理 API Keys fetch failure。
 	managementAPIKeysErr error
@@ -61,11 +56,8 @@ type metadataTestFetcher struct {
 func newMetadataTestFetcher() *metadataTestFetcher {
 	// fetcher 初始化全部 endpoint 的显式成功响应。
 	fetcher := &metadataTestFetcher{
-		// calls 从空 map 开始累计每轮调用。
-		calls: make(map[string]int),
-		// Auth Files 的 200 空列表会正常进入 stale 语义。
-		authFilesResult: &response.AuthFilesResult{StatusCode: 200, Payload: authfiles.AuthFilesResponse{Files: []authfiles.AuthFile{}}},
-		// 管理 API Keys 的 200 空列表会正常替换本地 key 状态。
+		calls:                   make(map[string]int),
+		credentialsResult:       &response.CredentialsResult{StatusCode: 200, Payload: credentials.CredentialsResponse{Files: []credentials.Credential{}}},
 		managementAPIKeysResult: &response.ManagementAPIKeysResult{StatusCode: 200, Payload: cpaapikeys.ManagementAPIKeysResponse{APIKeys: []string{}}},
 		// 默认模拟未装插件：404 absent，既有 metadata 测试不依赖插件 catalog。
 		keyPolicyKeysResult: &response.KeyPolicyKeysResult{StatusCode: 404},
@@ -110,20 +102,14 @@ func (f *metadataTestFetcher) callCount(source string) int {
 	return count
 }
 
-// setAuthFiles 用成功响应替换当前 Auth Files payload，供同一 fetcher 重复同步。
-func (f *metadataTestFetcher) setAuthFiles(files []authfiles.AuthFile) {
-	// 200 响应表示来源成功，即使 files 为空也应执行 stale。
-	f.authFilesResult = &response.AuthFilesResult{StatusCode: 200, Payload: authfiles.AuthFilesResponse{Files: files}}
-	// 成功响应清除之前注入的 fetch error。
-	f.authFilesErr = nil
+func (f *metadataTestFetcher) setCredentials(files []credentials.Credential) {
+	f.credentialsResult = &response.CredentialsResult{StatusCode: 200, Payload: credentials.CredentialsResponse{Files: files}}
+	f.credentialsErr = nil
 }
 
-// FetchAuthFiles 返回测试配置的 Auth Files 结果，并记录独立调用次数。
-func (f *metadataTestFetcher) FetchAuthFiles(context.Context) (*response.AuthFilesResult, error) {
-	// Auth Files 是 metadata 编排的第一类来源。
-	f.recordCall("auth-files")
-	// 返回预设结果与错误，允许 nil/error 合同测试。
-	return f.authFilesResult, f.authFilesErr
+func (f *metadataTestFetcher) FetchCredentials(context.Context) (*response.CredentialsResult, error) {
+	f.recordCall("credentials")
+	return f.credentialsResult, f.credentialsErr
 }
 
 // FetchManagementAPIKeys 返回测试配置的管理 API Keys 结果。

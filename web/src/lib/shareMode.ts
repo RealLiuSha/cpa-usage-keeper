@@ -1,6 +1,6 @@
 import { stripAppBasePath } from './usageNavigation';
 
-export const SHARE_TABS = ['overview', 'analysis', 'ranking'] as const;
+export const SHARE_TABS = ['overview', 'analysis'] as const;
 
 export type ShareTab = (typeof SHARE_TABS)[number];
 
@@ -12,7 +12,7 @@ export const isShareTab = (value: unknown): value is ShareTab => (
 
 /**
  * Resolve a share dashboard tab from a path already stripped of APP_BASE_PATH.
- * Accepts `/share/overview`, `/share/analysis`, `/share/ranking` (trailing slash ok).
+ * Accepts `/share/overview` and `/share/analysis` (trailing slash ok).
  */
 export const resolveShareTab = (pathname: string): ShareTab | null => {
   const normalized = pathname.startsWith('/') ? pathname : `/${pathname}`;

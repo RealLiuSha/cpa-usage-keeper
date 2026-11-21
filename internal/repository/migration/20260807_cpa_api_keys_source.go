@@ -7,26 +7,34 @@ import (
 	"gorm.io/gorm"
 )
 
+// cpaAPIKeySourceColumns snapshots the columns this migration added. The source column
+// itself is retired by keyPolicySourceTypeMigration, so it no longer exists on the entity.
+type cpaAPIKeySourceColumns struct {
+	Source     string `gorm:"default:native"`
+	ExternalID string
+	Enabled    bool
+}
+
+func (cpaAPIKeySourceColumns) TableName() string {
+	return "cpa_api_keys"
+}
+
 // addCPAAPIKeysSourceMigration adds dual-source identity fields for native and
-// plugin:cpa-key-policy keys, backfills historical rows, and indexes (source, is_deleted).
+// plugin:cpa-key-policy keys and backfills historical rows. It used to index
+// (source, is_deleted) as well; keyPolicySourceTypeMigration drops that index together
+// with the column, so databases that have not run this version yet skip creating it.
 func addCPAAPIKeysSourceMigration(tx *gorm.DB) error {
 	if tx == nil {
 		return fmt.Errorf("database is nil")
 	}
 	migrator := tx.Migrator()
-	if !migrator.HasColumn(&entities.CPAAPIKey{}, "Source") {
-		if err := migrator.AddColumn(&entities.CPAAPIKey{}, "Source"); err != nil {
-			return fmt.Errorf("add CPA API key source: %w", err)
+	model := &cpaAPIKeySourceColumns{}
+	for _, field := range []string{"Source", "ExternalID", "Enabled"} {
+		if migrator.HasColumn(model, field) {
+			continue
 		}
-	}
-	if !migrator.HasColumn(&entities.CPAAPIKey{}, "ExternalID") {
-		if err := migrator.AddColumn(&entities.CPAAPIKey{}, "ExternalID"); err != nil {
-			return fmt.Errorf("add CPA API key external_id: %w", err)
-		}
-	}
-	if !migrator.HasColumn(&entities.CPAAPIKey{}, "Enabled") {
-		if err := migrator.AddColumn(&entities.CPAAPIKey{}, "Enabled"); err != nil {
-			return fmt.Errorf("add CPA API key enabled: %w", err)
+		if err := migrator.AddColumn(model, field); err != nil {
+			return fmt.Errorf("add CPA API key %s: %w", field, err)
 		}
 	}
 	// Source may already be "native" from the column default after AddColumn; always
@@ -43,11 +51,6 @@ func addCPAAPIKeysSourceMigration(tx *gorm.DB) error {
 		entities.CPAAPIKeySourceNative,
 	).Error; err != nil {
 		return fmt.Errorf("backfill CPA API key enabled: %w", err)
-	}
-	if !migrator.HasIndex(&entities.CPAAPIKey{}, "idx_cpa_api_keys_source_is_deleted") {
-		if err := migrator.CreateIndex(&entities.CPAAPIKey{}, "idx_cpa_api_keys_source_is_deleted"); err != nil {
-			return fmt.Errorf("create CPA API key source index: %w", err)
-		}
 	}
 	return nil
 }

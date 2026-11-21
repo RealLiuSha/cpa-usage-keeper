@@ -21,7 +21,7 @@ describe('App role route normalization', () => {
   it('does not bounce share dashboard paths to the role home when share public is enabled', () => {
     expect(shouldNormalizeRolePath('admin', '/share/overview', { sharePublicEnabled: true })).toBe(false);
     expect(shouldNormalizeRolePath('admin', '/share/analysis', { sharePublicEnabled: true })).toBe(false);
-    expect(shouldNormalizeRolePath('admin', '/share/ranking', { sharePublicEnabled: true })).toBe(false);
+    expect(shouldNormalizeRolePath('admin', '/share/ranking', { sharePublicEnabled: true })).toBe(true);
   });
 
   it('normalizes share paths to role home when share public is disabled', () => {

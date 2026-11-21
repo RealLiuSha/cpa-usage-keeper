@@ -19,13 +19,14 @@ import (
 const maxCPAAPIKeyAliasLength = 128
 
 type cpaAPIKeyResponse struct {
-	ID           string  `json:"id"`
-	KeyAlias     string  `json:"keyAlias"`
-	DisplayKey   string  `json:"displayKey"`
-	Label        string  `json:"label"`
-	Source       string  `json:"source"`
-	Enabled      bool    `json:"enabled"`
-	LastSyncedAt *string `json:"lastSyncedAt"`
+	ID             string  `json:"id"`
+	KeyAlias       string  `json:"keyAlias"`
+	DisplayKey     string  `json:"displayKey"`
+	Label          string  `json:"label"`
+	LastSyncedAt   *string `json:"lastSyncedAt"`
+	SourceType     string  `json:"sourceType"`
+	AccessProvider string  `json:"accessProvider"`
+	Enabled        bool    `json:"enabled"`
 }
 
 type cpaAPIKeyListResponse struct {
@@ -33,14 +34,15 @@ type cpaAPIKeyListResponse struct {
 }
 
 type cpaAPIKeySettingsResponse struct {
-	ID           string  `json:"id"`
-	APIKey       string  `json:"apiKey"`
-	KeyAlias     string  `json:"keyAlias"`
-	DisplayKey   string  `json:"displayKey"`
-	Label        string  `json:"label"`
-	Source       string  `json:"source"`
-	Enabled      bool    `json:"enabled"`
-	LastSyncedAt *string `json:"lastSyncedAt"`
+	ID             string  `json:"id"`
+	APIKey         string  `json:"apiKey,omitempty"`
+	KeyAlias       string  `json:"keyAlias"`
+	DisplayKey     string  `json:"displayKey"`
+	Label          string  `json:"label"`
+	LastSyncedAt   *string `json:"lastSyncedAt"`
+	SourceType     string  `json:"sourceType"`
+	AccessProvider string  `json:"accessProvider"`
+	Enabled        bool    `json:"enabled"`
 }
 
 type cpaAPIKeySettingsListResponse struct {
@@ -48,10 +50,8 @@ type cpaAPIKeySettingsListResponse struct {
 }
 
 type cpaAPIKeyOption struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Source  string `json:"source"`
-	Enabled bool   `json:"enabled"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
 type cpaAPIKeyOptionsResponse struct {
@@ -62,40 +62,29 @@ type updateCPAAPIKeyAliasRequest struct {
 	KeyAlias string `json:"keyAlias"`
 }
 
-// registerCPAAPIKeyOptionRoutes 仅暴露筛选用的 id/label 列表，不含 raw key。
-func registerCPAAPIKeyOptionRoutes(router gin.IRoutes, provider service.CPAAPIKeyProvider) {
-	registerCPAAPIKeyOptionRoutesWithLabelMode(router, provider, false)
+// registerPublicCPAAPIKeyOptionRoutes serves the filter candidates to anonymous share
+// clients with public-safe labels that never echo raw secrets.
+func registerPublicCPAAPIKeyOptionRoutes(router gin.IRoutes, provider service.CPAAPIKeyProvider, usageProvider service.UsageProvider) {
+	registerCPAAPIKeyOptionsRoute(router, provider, usageProvider, toPublicCPAAPIKeyOption)
 }
 
-// registerPublicCPAAPIKeyOptionRoutes uses public-safe labels for anonymous share clients.
-func registerPublicCPAAPIKeyOptionRoutes(router gin.IRoutes, provider service.CPAAPIKeyProvider) {
-	registerCPAAPIKeyOptionRoutesWithLabelMode(router, provider, true)
-}
-
-func registerCPAAPIKeyOptionRoutesWithLabelMode(router gin.IRoutes, provider service.CPAAPIKeyProvider, publicSafeLabels bool) {
+// registerCPAAPIKeyOptionsRoute 仅暴露筛选用的 id/label 列表，不含 raw key；label 由调用方决定公开口径。
+func registerCPAAPIKeyOptionsRoute(router gin.IRoutes, provider service.CPAAPIKeyProvider, usageProvider service.UsageProvider, toOption func(entities.CPAAPIKey) cpaAPIKeyOption) {
 	router.GET("/usage/api-keys/options", func(c *gin.Context) {
-		if provider == nil {
-			c.JSON(http.StatusOK, cpaAPIKeyOptionsResponse{Options: []cpaAPIKeyOption{}})
+		setNoStoreHeaders(c)
+		if scope := strings.TrimSpace(c.Query("scope")); scope != "" {
+			listScopedCPAAPIKeyOptions(c, usageProvider, scope, toOption)
 			return
 		}
-		rows, err := provider.ListCPAAPIKeys(c.Request.Context())
+		rows, err := listCPAAPIKeyOptionRows(c, provider, toOption)
 		if err != nil {
-			writeInternalError(c, "list api key options failed", err)
 			return
 		}
-		response := make([]cpaAPIKeyOption, 0, len(rows))
-		for _, row := range rows {
-			if publicSafeLabels {
-				response = append(response, toPublicCPAAPIKeyOption(row))
-				continue
-			}
-			response = append(response, toCPAAPIKeyOption(row))
-		}
-		c.JSON(http.StatusOK, cpaAPIKeyOptionsResponse{Options: response})
+		c.JSON(http.StatusOK, cpaAPIKeyOptionsResponse{Options: rows})
 	})
 }
 
-func registerCPAAPIKeyRoutes(router gin.IRoutes, provider service.CPAAPIKeyProvider) {
+func registerCPAAPIKeyRoutes(router gin.IRoutes, provider service.CPAAPIKeyProvider, usageProvider service.UsageProvider) {
 	router.GET("/usage/api-keys", func(c *gin.Context) {
 		rows, err := listCPAAPIKeyRows(c, provider)
 		if err != nil {
@@ -112,7 +101,7 @@ func registerCPAAPIKeyRoutes(router gin.IRoutes, provider service.CPAAPIKeyProvi
 		c.JSON(http.StatusOK, cpaAPIKeySettingsListResponse{Items: rows})
 	})
 
-	registerCPAAPIKeyOptionRoutes(router, provider)
+	registerCPAAPIKeyOptionsRoute(router, provider, usageProvider, toCPAAPIKeyOption)
 
 	router.PATCH("/usage/api-keys/:id", func(c *gin.Context) {
 		if provider == nil {
@@ -183,6 +172,22 @@ func listCPAAPIKeySettingsRows(c *gin.Context, provider service.CPAAPIKeyProvide
 	return response, nil
 }
 
+func listCPAAPIKeyOptionRows(c *gin.Context, provider service.CPAAPIKeyProvider, toOption func(entities.CPAAPIKey) cpaAPIKeyOption) ([]cpaAPIKeyOption, error) {
+	if provider == nil {
+		return []cpaAPIKeyOption{}, nil
+	}
+	rows, err := provider.ListCPAAPIKeys(c.Request.Context())
+	if err != nil {
+		writeInternalError(c, "list api key options failed", err)
+		return nil, err
+	}
+	response := make([]cpaAPIKeyOption, 0, len(rows))
+	for _, row := range rows {
+		response = append(response, toOption(row))
+	}
+	return response, nil
+}
+
 func toCPAAPIKeyResponse(row entities.CPAAPIKey) cpaAPIKeyResponse {
 	label := helper.CPAAPIKeyDisplayName(row)
 	var lastSyncedAt *string
@@ -191,13 +196,14 @@ func toCPAAPIKeyResponse(row entities.CPAAPIKey) cpaAPIKeyResponse {
 		lastSyncedAt = &value
 	}
 	return cpaAPIKeyResponse{
-		ID:           strconv.FormatInt(row.ID, 10),
-		KeyAlias:     row.KeyAlias,
-		DisplayKey:   helper.CPAAPIKeyMaskedDisplayKey(row),
-		Label:        label,
-		Source:       cpaAPIKeySourceForResponse(row),
-		Enabled:      cpaAPIKeyEnabledForResponse(row),
-		LastSyncedAt: lastSyncedAt,
+		ID:             strconv.FormatInt(row.ID, 10),
+		KeyAlias:       row.KeyAlias,
+		DisplayKey:     helper.CPAAPIKeyMaskedDisplayKey(row),
+		Label:          label,
+		LastSyncedAt:   lastSyncedAt,
+		SourceType:     cpaAPIKeySourceType(row),
+		AccessProvider: row.AccessProvider,
+		Enabled:        row.IsEnabled(),
 	}
 }
 
@@ -208,51 +214,42 @@ func toCPAAPIKeySettingsResponse(row entities.CPAAPIKey) cpaAPIKeySettingsRespon
 		value := timeutil.FormatStorageTime(*row.LastSyncedAt)
 		lastSyncedAt = &value
 	}
+	apiKey := row.APIKey
+	if row.SourceType == entities.CPAAPIKeySourcePlugin {
+		apiKey = ""
+	}
 	return cpaAPIKeySettingsResponse{
-		ID:           strconv.FormatInt(row.ID, 10),
-		APIKey:       row.APIKey,
-		KeyAlias:     row.KeyAlias,
-		DisplayKey:   helper.CPAAPIKeyMaskedDisplayKey(row),
-		Label:        label,
-		Source:       cpaAPIKeySourceForResponse(row),
-		Enabled:      cpaAPIKeyEnabledForResponse(row),
-		LastSyncedAt: lastSyncedAt,
+		ID:             strconv.FormatInt(row.ID, 10),
+		APIKey:         apiKey,
+		KeyAlias:       row.KeyAlias,
+		DisplayKey:     helper.CPAAPIKeyMaskedDisplayKey(row),
+		Label:          label,
+		LastSyncedAt:   lastSyncedAt,
+		SourceType:     cpaAPIKeySourceType(row),
+		AccessProvider: row.AccessProvider,
+		Enabled:        row.IsEnabled(),
 	}
 }
 
+func cpaAPIKeySourceType(row entities.CPAAPIKey) string {
+	if row.SourceType == entities.CPAAPIKeySourcePlugin {
+		return entities.CPAAPIKeySourcePlugin
+	}
+	return entities.CPAAPIKeySourceNative
+}
+
 func toCPAAPIKeyOption(row entities.CPAAPIKey) cpaAPIKeyOption {
-	label := helper.CPAAPIKeyDisplayName(row)
 	return cpaAPIKeyOption{
-		ID:      strconv.FormatInt(row.ID, 10),
-		Label:   label,
-		Source:  cpaAPIKeySourceForResponse(row),
-		Enabled: cpaAPIKeyEnabledForResponse(row),
+		ID:    strconv.FormatInt(row.ID, 10),
+		Label: helper.CPAAPIKeyDisplayName(row),
 	}
 }
 
 func toPublicCPAAPIKeyOption(row entities.CPAAPIKey) cpaAPIKeyOption {
 	return cpaAPIKeyOption{
-		ID:      strconv.FormatInt(row.ID, 10),
-		Label:   helper.CPAAPIKeyPublicDisplayName(row),
-		Source:  cpaAPIKeySourceForResponse(row),
-		Enabled: cpaAPIKeyEnabledForResponse(row),
+		ID:    strconv.FormatInt(row.ID, 10),
+		Label: helper.CPAAPIKeyPublicDisplayName(row),
 	}
-}
-
-// cpaAPIKeySourceForResponse normalizes empty historical source to native for API consumers.
-func cpaAPIKeySourceForResponse(row entities.CPAAPIKey) string {
-	if entities.IsPluginKeyPolicySource(row.Source) {
-		return entities.CPAAPIKeySourcePluginKeyPolicy
-	}
-	return entities.CPAAPIKeySourceNative
-}
-
-func cpaAPIKeyEnabledForResponse(row entities.CPAAPIKey) bool {
-	if entities.IsPluginKeyPolicySource(row.Source) {
-		return row.Enabled
-	}
-	// Native rows are always treated as enabled for display.
-	return true
 }
 
 func validateCPAAPIKeyAlias(value string) error {

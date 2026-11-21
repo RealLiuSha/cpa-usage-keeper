@@ -55,13 +55,13 @@ func TestSyncMetadataKeyPolicyReadyWritesPluginRows(t *testing.T) {
 	for _, row := range rows {
 		byKey[row.APIKey] = row
 	}
-	if byKey["team-a"].Source != entities.CPAAPIKeySourcePluginKeyPolicy || byKey["team-a"].KeyAlias != "Team A" {
+	if !byKey["team-a"].IsKeyPolicyCatalog() || byKey["team-a"].KeyAlias != "Team A" {
 		t.Fatalf("team-a: %+v", byKey["team-a"])
 	}
 	if byKey["team-b"].Enabled {
 		t.Fatalf("team-b should be disabled: %+v", byKey["team-b"])
 	}
-	if byKey["sk-native-alpha"].Source != entities.CPAAPIKeySourceNative {
+	if byKey["sk-native-alpha"].SourceType != entities.CPAAPIKeySourceNative {
 		t.Fatalf("native: %+v", byKey["sk-native-alpha"])
 	}
 }

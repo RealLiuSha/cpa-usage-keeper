@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -31,14 +30,15 @@ func (s *keyViewerAnalysisUsageStub) GetAnalysis(_ context.Context, filter servi
 	}
 	return &servicedto.AnalysisSnapshot{
 		Granularity: servicedto.AnalysisGranularityHourly,
+		ModelSpeed:  servicedto.AnalysisModelSpeed{Series: []servicedto.AnalysisModelSpeedSeries{{Model: "claude-sonnet", TotalTokens: tokens}}},
 		APIKeyComposition: []servicedto.AnalysisCompositionItem{{
 			Key: key, TotalTokens: tokens, Requests: 1,
 		}},
 		ModelComposition: []servicedto.AnalysisCompositionItem{{
 			Key: "claude-sonnet", TotalTokens: tokens, Requests: 1,
 		}},
-		AuthFilesComposition: []servicedto.AnalysisCompositionItem{{
-			Key: "auth-file-private", Label: "Private Auth File", TotalTokens: tokens, Requests: 1,
+		CredentialsComposition: []servicedto.AnalysisCompositionItem{{
+			Key: "credential-private", Label: "Private Credential", TotalTokens: tokens, Requests: 1,
 		}},
 		AIProviderComposition: []servicedto.AnalysisCompositionItem{{
 			Key: "provider-private", Label: "Private Provider", TotalTokens: tokens, Requests: 1,
@@ -58,6 +58,7 @@ func (s *keyViewerAnalysisUsageStub) GetAnalysisLatency(_ context.Context, filte
 }
 
 type keyViewerAnalysisKeyStub struct {
+	service.CPAAPIKeyProvider
 	row       entities.CPAAPIKey
 	listCalls int
 }
@@ -67,19 +68,11 @@ func (s *keyViewerAnalysisKeyStub) ListCPAAPIKeys(context.Context) ([]entities.C
 	return []entities.CPAAPIKey{s.row, {ID: 99, APIKey: "sk-other654321", KeyAlias: "Other Key"}}, nil
 }
 
-func (s *keyViewerAnalysisKeyStub) FindActiveNativeCPAAPIKeyByValue(context.Context, string) (entities.CPAAPIKey, error) {
-	return s.row, nil
-}
-
 func (s *keyViewerAnalysisKeyStub) FindActiveCPAAPIKeyByID(_ context.Context, id int64) (entities.CPAAPIKey, error) {
 	if id != s.row.ID {
 		return entities.CPAAPIKey{}, service.ErrInvalidID
 	}
 	return s.row, nil
-}
-
-func (s *keyViewerAnalysisKeyStub) UpdateCPAAPIKeyAlias(context.Context, int64, string) (entities.CPAAPIKey, error) {
-	return entities.CPAAPIKey{}, service.ErrInvalidID
 }
 
 func TestAPIKeyViewerAnalysisForcesSessionKeyAndOmitsSourceComposition(t *testing.T) {
@@ -95,10 +88,7 @@ func TestAPIKeyViewerAnalysisForcesSessionKeyAndOmitsSourceComposition(t *testin
 	config := AuthConfig{Enabled: true, LoginPassword: "secret", SessionTTL: time.Hour}
 	router := NewRouter(nil, nil, usageProvider, nil, config, NewAuthHandler(config, sessions), "", OptionalProviders{CPAAPIKeys: keyProvider})
 
-	analysisResponse := httptest.NewRecorder()
-	analysisRequest := httptest.NewRequest(http.MethodGet, "/api/v1/key-analysis?range=24h&api_key_id=99", nil)
-	analysisRequest.AddCookie(&http.Cookie{Name: standardSessionCookieName, Value: token})
-	router.ServeHTTP(analysisResponse, analysisRequest)
+	analysisResponse := serveAPIGet(router, "/api/v1/key-analysis?range=24h&api_key_id=99", &http.Cookie{Name: standardSessionCookieName, Value: token})
 
 	if analysisResponse.Code != http.StatusOK {
 		t.Fatalf("analysis status=%d, want 200: %s", analysisResponse.Code, analysisResponse.Body.String())
@@ -107,10 +97,15 @@ func TestAPIKeyViewerAnalysisForcesSessionKeyAndOmitsSourceComposition(t *testin
 		t.Fatalf("expected analysis filter to force session key 42, got %+v", usageProvider.analysisFilters)
 	}
 	var analysisPayload struct {
-		APIKeyComposition     []struct{ Key, Label string } `json:"api_key_composition"`
-		AuthFilesComposition  []json.RawMessage             `json:"auth_files_composition"`
-		AIProviderComposition []json.RawMessage             `json:"ai_provider_composition"`
-		Heatmap               struct {
+		ModelSpeed struct {
+			Series []struct {
+				TotalTokens int64 `json:"total_tokens"`
+			} `json:"series"`
+		} `json:"model_speed"`
+		APIKeyComposition      []struct{ Key, Label string } `json:"api_key_composition"`
+		CredentialsComposition []json.RawMessage             `json:"credentials_composition"`
+		AIProviderComposition  []json.RawMessage             `json:"ai_provider_composition"`
+		Heatmap                struct {
 			APIKeys      []string          `json:"api_keys"`
 			APIKeyLabels map[string]string `json:"api_key_labels"`
 		} `json:"heatmap"`
@@ -118,11 +113,14 @@ func TestAPIKeyViewerAnalysisForcesSessionKeyAndOmitsSourceComposition(t *testin
 	if err := json.Unmarshal(analysisResponse.Body.Bytes(), &analysisPayload); err != nil {
 		t.Fatalf("decode analysis response: %v", err)
 	}
+	if len(analysisPayload.ModelSpeed.Series) != 1 || analysisPayload.ModelSpeed.Series[0].TotalTokens != 42 {
+		t.Fatalf("speed must share viewer key filter: %+v", analysisPayload.ModelSpeed)
+	}
 	if len(analysisPayload.APIKeyComposition) != 1 || analysisPayload.APIKeyComposition[0].Key != "42" || analysisPayload.APIKeyComposition[0].Label != "Viewer Key" {
 		t.Fatalf("expected only the session key identity, got %+v", analysisPayload.APIKeyComposition)
 	}
-	if len(analysisPayload.AuthFilesComposition) != 0 || len(analysisPayload.AIProviderComposition) != 0 {
-		t.Fatalf("expected source composition to be omitted, got auth=%s provider=%s", analysisPayload.AuthFilesComposition, analysisPayload.AIProviderComposition)
+	if len(analysisPayload.CredentialsComposition) != 0 || len(analysisPayload.AIProviderComposition) != 0 {
+		t.Fatalf("expected source composition to be omitted, got auth=%s provider=%s", analysisPayload.CredentialsComposition, analysisPayload.AIProviderComposition)
 	}
 	if len(analysisPayload.Heatmap.APIKeys) != 1 || analysisPayload.Heatmap.APIKeys[0] != "42" || analysisPayload.Heatmap.APIKeyLabels["42"] != "Viewer Key" {
 		t.Fatalf("expected heatmap to use only the session key identity, got %+v", analysisPayload.Heatmap)
@@ -131,10 +129,7 @@ func TestAPIKeyViewerAnalysisForcesSessionKeyAndOmitsSourceComposition(t *testin
 		t.Fatalf("expected viewer analysis not to list every API key, got %d calls", keyProvider.listCalls)
 	}
 
-	latencyResponse := httptest.NewRecorder()
-	latencyRequest := httptest.NewRequest(http.MethodGet, "/api/v1/key-analysis/latency?range=24h&api_key_id=99", nil)
-	latencyRequest.AddCookie(&http.Cookie{Name: standardSessionCookieName, Value: token})
-	router.ServeHTTP(latencyResponse, latencyRequest)
+	latencyResponse := serveAPIGet(router, "/api/v1/key-analysis/latency?range=24h&api_key_id=99", &http.Cookie{Name: standardSessionCookieName, Value: token})
 
 	if latencyResponse.Code != http.StatusOK {
 		t.Fatalf("latency status=%d, want 200: %s", latencyResponse.Code, latencyResponse.Body.String())
@@ -162,10 +157,7 @@ func TestAPIKeyViewerAnalysisRevokesInactiveKeySession(t *testing.T) {
 		OptionalProviders{CPAAPIKeys: &keyViewerAnalysisKeyStub{}},
 	)
 
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/cpa/api/v1/key-analysis?range=24h", nil)
-	request.AddCookie(&http.Cookie{Name: standardSessionCookieName, Value: token})
-	router.ServeHTTP(response, request)
+	response := serveAPIGet(router, "/cpa/api/v1/key-analysis?range=24h", &http.Cookie{Name: standardSessionCookieName, Value: token})
 
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d, want 401: %s", response.Code, response.Body.String())

@@ -9,15 +9,9 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/plugin/dbresolver"
 )
-
-// cpaAPIKeyNativeSourcePredicate is the single warehouse-wide definition of a
-// native CPA API key row (H8). Includes empty/NULL historical sources so login
-// and native stale scans stay consistent when backfill is missing.
-//
-// Usage: db.Where(cpaAPIKeyNativeSourcePredicate, entities.CPAAPIKeySourceNative)
-const cpaAPIKeyNativeSourcePredicate = "(source = ? OR source IS NULL OR source = '')"
 
 // PluginKeyPolicyKey is one public catalog entry from cpa-plugin-key-policy.
 // ID is the analysis match key written into api_key (never the secret).
@@ -28,11 +22,6 @@ type PluginKeyPolicyKey struct {
 	KeyPreview string
 }
 
-// SyncCPAAPIKeys upserts native management API keys and soft-deletes only native
-// rows that are missing from this round (H1). Plugin rows are never soft-deleted here.
-//
-// Lookup by api_key always scans the full table (including soft-deleted rows)
-// because uniq_cpa_api_keys_api_key does not include is_deleted (H7).
 func SyncCPAAPIKeys(db *gorm.DB, keys []string, syncedAt time.Time) error {
 	seen := make(map[string]struct{}, len(keys))
 	uniqueKeys := make([]string, 0, len(keys))
@@ -49,17 +38,15 @@ func SyncCPAAPIKeys(db *gorm.DB, keys []string, syncedAt time.Time) error {
 	}
 
 	var existingRows []struct {
-		ID           int64
-		APIKey       string
-		DisplayKey   string
-		Source       string
-		Enabled      bool
-		IsDeleted    bool
-		LastSyncedAt *time.Time `gorm:"serializer:storageTime"`
+		ID         int64
+		APIKey     string
+		DisplayKey string
+		IsDeleted  bool
 	}
-	// Compare the full native/plugin identity set through the reader before opening a writer transaction.
+	// 先在独立 reader 上比较完整 key 集合，只有变化才进入 writer 事务。
 	if err := db.Clauses(dbresolver.Read).Model(&entities.CPAAPIKey{}).
-		Select("id, api_key, display_key, source, enabled, is_deleted, last_synced_at").Find(&existingRows).Error; err != nil {
+		Where("source_type = ?", entities.CPAAPIKeySourceNative).
+		Select("id, api_key, display_key, is_deleted").Find(&existingRows).Error; err != nil {
 		return err
 	}
 	type keyUpdate struct {
@@ -77,26 +64,12 @@ func SyncCPAAPIKeys(db *gorm.DB, keys []string, syncedAt time.Time) error {
 		incoming[key] = struct{}{}
 		if index, ok := existingByKey[key]; ok {
 			row := existingRows[index]
-			if !entities.IsNativeCPAAPIKeySource(row.Source) {
-				// First-writer-wins on the unique api_key: never flip a plugin row to native.
-				logrus.WithFields(logrus.Fields{
-					"api_key": helper.RedactSensitiveValue(key),
-					"source":  row.Source,
-				}).Error("native api key sync skipped row owned by non-native source")
-				continue
-			}
 			fields := make(map[string]any)
-			if row.Source != entities.CPAAPIKeySourceNative {
-				fields["source"] = entities.CPAAPIKeySourceNative
-			}
-			if !row.Enabled {
-				fields["enabled"] = true
+			if display := helper.RedactSensitiveValue(key); row.DisplayKey != display {
+				fields["display_key"] = display
 			}
 			if row.IsDeleted {
 				fields["is_deleted"] = false
-			}
-			if display := helper.RedactSensitiveValue(key); row.DisplayKey != display {
-				fields["display_key"] = display
 			}
 			if len(fields) > 0 {
 				fields["last_synced_at"] = &syncedAt
@@ -107,16 +80,15 @@ func SyncCPAAPIKeys(db *gorm.DB, keys []string, syncedAt time.Time) error {
 		}
 		toCreate = append(toCreate, entities.CPAAPIKey{
 			APIKey:       key,
+			SourceType:   entities.CPAAPIKeySourceNative,
 			DisplayKey:   helper.RedactSensitiveValue(key),
-			Source:       entities.CPAAPIKeySourceNative,
-			Enabled:      true,
 			IsDeleted:    false,
 			LastSyncedAt: &syncedAt,
 		})
 	}
 	staleIDs := make([]int64, 0)
 	for _, row := range existingRows {
-		if row.IsDeleted || !entities.IsNativeCPAAPIKeySource(row.Source) {
+		if row.IsDeleted {
 			continue
 		}
 		if _, ok := incoming[row.APIKey]; !ok {
@@ -128,26 +100,26 @@ func SyncCPAAPIKeys(db *gorm.DB, keys []string, syncedAt time.Time) error {
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
 		for _, change := range toUpdate {
-			if err := tx.Model(&entities.CPAAPIKey{}).Where("id = ?", change.id).Updates(change.fields).Error; err != nil {
+			if err := tx.Model(&entities.CPAAPIKey{}).Where("id = ? AND source_type = ?", change.id, entities.CPAAPIKeySourceNative).Updates(change.fields).Error; err != nil {
 				return err
 			}
 		}
 		if len(toCreate) > 0 {
-			if err := tx.Create(&toCreate).Error; err != nil {
+			if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "api_key"}}, DoNothing: true}).CreateInBatches(&toCreate, insertBatchSize(entities.CPAAPIKey{})).Error; err != nil {
 				return err
 			}
 		}
 		if len(staleIDs) == 0 {
 			return nil
 		}
-		return tx.Model(&entities.CPAAPIKey{}).Where("id IN ?", staleIDs).
-			Updates(map[string]any{"is_deleted": true, "updated_at": syncedAt}).Error
+		return tx.Model(&entities.CPAAPIKey{}).Where("id IN ? AND source_type = ?", staleIDs, entities.CPAAPIKeySourceNative).Updates(map[string]any{"is_deleted": true, "updated_at": syncedAt}).Error
 	})
 }
 
-// SyncPluginKeyPolicyKeys upserts plugin:cpa-key-policy catalog rows and soft-deletes
-// only plugin rows missing from this ready list (H2). Soft-deleted plugin rows are
-// revived in place so local int64 ids stay stable (H7).
+// SyncPluginKeyPolicyKeys upserts key-policy catalog rows and soft-deletes only
+// key-policy rows missing from this ready list. Soft-deleted rows are revived in
+// place so local int64 ids stay stable; native rows and other plugin identities
+// sharing the unique api_key are never taken over (first writer wins).
 //
 // Callers must not invoke this on fetch error; only ready catalogs (including empty).
 func SyncPluginKeyPolicyKeys(db *gorm.DB, keys []PluginKeyPolicyKey, syncedAt time.Time) error {
@@ -170,20 +142,10 @@ func SyncPluginKeyPolicyKeys(db *gorm.DB, keys []PluginKeyPolicyKey, syncedAt ti
 		})
 	}
 
-	var existingRows []struct {
-		ID           int64
-		APIKey       string
-		Source       string
-		KeyAlias     string
-		DisplayKey   string
-		ExternalID   string
-		Enabled      bool
-		IsDeleted    bool
-		LastSyncedAt *time.Time `gorm:"serializer:storageTime"`
-	}
+	var existingRows []entities.CPAAPIKey
 	// Read the complete table before taking the writer so unchanged snapshots can return immediately.
 	if err := db.Clauses(dbresolver.Read).Model(&entities.CPAAPIKey{}).
-		Select("id, api_key, source, key_alias, display_key, external_id, enabled, is_deleted, last_synced_at").
+		Select("id, api_key, source_type, access_provider, key_alias, display_key, external_id, enabled, is_deleted, last_synced_at").
 		Find(&existingRows).Error; err != nil {
 		return err
 	}
@@ -211,9 +173,9 @@ func SyncPluginKeyPolicyKeys(db *gorm.DB, keys []PluginKeyPolicyKey, syncedAt ti
 
 		if index, ok := existingByKey[key.ID]; ok {
 			existing := existingRows[index]
-			if !entities.IsPluginKeyPolicySource(existing.Source) {
-				// first-writer-wins on uniq api_key; never flip a native/empty-source row to plugin.
-				logrus.WithFields(logrus.Fields{"api_key": key.ID, "source": existing.Source}).Error("plugin key-policy sync skipped row owned by non-plugin source")
+			if !existing.IsKeyPolicyCatalog() {
+				// first-writer-wins on uniq api_key; never flip a native or other plugin row to key-policy.
+				logrus.WithFields(logrus.Fields{"api_key": key.ID, "source_type": existing.SourceType, "access_provider": existing.AccessProvider}).Error("plugin key-policy sync skipped row owned by another source")
 				continue
 			}
 			updates := make(map[string]any)
@@ -241,20 +203,21 @@ func SyncPluginKeyPolicyKeys(db *gorm.DB, keys []PluginKeyPolicyKey, syncedAt ti
 		}
 
 		toCreate = append(toCreate, entities.CPAAPIKey{
-			APIKey:       key.ID,
-			DisplayKey:   displayKey,
-			KeyAlias:     defaultAlias,
-			Source:       entities.CPAAPIKeySourcePluginKeyPolicy,
-			ExternalID:   key.ID,
-			Enabled:      key.Enabled,
-			IsDeleted:    false,
-			LastSyncedAt: &syncedAt,
+			APIKey:         key.ID,
+			DisplayKey:     displayKey,
+			KeyAlias:       defaultAlias,
+			SourceType:     entities.CPAAPIKeySourcePlugin,
+			AccessProvider: entities.CPAAPIKeyAccessProviderKeyPolicy,
+			ExternalID:     key.ID,
+			Enabled:        key.Enabled,
+			IsDeleted:      false,
+			LastSyncedAt:   &syncedAt,
 		})
 	}
 	// Stale scan only manages exact active plugin rows.
 	staleIDs := make([]int64, 0)
 	for _, row := range existingRows {
-		if row.IsDeleted || !entities.IsPluginKeyPolicySource(row.Source) {
+		if row.IsDeleted || !row.IsKeyPolicyCatalog() {
 			continue
 		}
 		if _, ok := incoming[row.APIKey]; !ok {
@@ -283,11 +246,11 @@ func SyncPluginKeyPolicyKeys(db *gorm.DB, keys []PluginKeyPolicyKey, syncedAt ti
 	})
 }
 
-// SoftDeleteAllPluginKeyPolicyKeys marks every active plugin:cpa-key-policy row deleted.
+// SoftDeleteAllPluginKeyPolicyKeys marks every active key-policy catalog row deleted.
 // Used when the plugin endpoint is absent (404/501).
 func SoftDeleteAllPluginKeyPolicyKeys(db *gorm.DB, syncedAt time.Time) error {
 	return db.Model(&entities.CPAAPIKey{}).
-		Where("source = ? AND is_deleted = ?", entities.CPAAPIKeySourcePluginKeyPolicy, false).
+		Where("source_type = ? AND access_provider = ? AND is_deleted = ?", entities.CPAAPIKeySourcePlugin, entities.CPAAPIKeyAccessProviderKeyPolicy, false).
 		Updates(map[string]any{"is_deleted": true, "updated_at": syncedAt}).Error
 }
 
@@ -303,15 +266,10 @@ func FindActiveCPAAPIKeyByID(db *gorm.DB, id int64) (entities.CPAAPIKey, error) 
 	return row, err
 }
 
-// FindActiveNativeCPAAPIKeyByValue looks up an active native (or empty-source historical)
-// row by api_key for Key Viewer login only (H4 / H8). Plugin logical ids never match.
-//
-// api_key is a login credential here, not an analysis match key.
-func FindActiveNativeCPAAPIKeyByValue(db *gorm.DB, apiKey string) (entities.CPAAPIKey, error) {
+func FindActiveCPAAPIKeyByValue(db *gorm.DB, apiKey string) (entities.CPAAPIKey, error) {
 	var row entities.CPAAPIKey
-	err := db.Where("api_key = ? AND is_deleted = ?", apiKey, false).
-		Where(cpaAPIKeyNativeSourcePredicate, entities.CPAAPIKeySourceNative).
-		First(&row).Error
+	// 该入口用于 API key 登录，插件的统计关联标识不能作为原生凭证。
+	err := db.Where("api_key = ? AND is_deleted = ? AND source_type = ?", apiKey, false, entities.CPAAPIKeySourceNative).First(&row).Error
 	return row, err
 }
 
@@ -324,23 +282,4 @@ func UpdateCPAAPIKeyAlias(db *gorm.DB, id int64, keyAlias string) error {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
-}
-
-// UpdateCPAAPIKeyLocalRankingProfile 在同一写事务中保存并回读 Key 的本地展示资料。
-func UpdateCPAAPIKeyLocalRankingProfile(db *gorm.DB, id int64, keyAlias string, avatarID uint8) (entities.CPAAPIKey, error) {
-	var row entities.CPAAPIKey
-	err := db.Clauses(dbresolver.Write).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&entities.CPAAPIKey{}).Where("id = ?", id).Updates(map[string]any{
-			"key_alias":               strings.TrimSpace(keyAlias),
-			"local_ranking_avatar_id": avatarID,
-		})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-		return tx.Where("id = ?", id).First(&row).Error
-	})
-	return row, err
 }

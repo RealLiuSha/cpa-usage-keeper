@@ -58,10 +58,11 @@ func TestCPAAPIKeyMaskedDisplayKeyFallsBackToStoredDisplayKeyWhenRawKeyIsMissing
 
 func TestCPAAPIKeyDisplayNameForPluginDoesNotRedactShortID(t *testing.T) {
 	row := entities.CPAAPIKey{
-		APIKey:     "team-a",
-		Source:     entities.CPAAPIKeySourcePluginKeyPolicy,
-		ExternalID: "team-a",
-		DisplayKey: "cpa_Ab…xy12",
+		APIKey:         "team-a",
+		SourceType:     entities.CPAAPIKeySourcePlugin,
+		AccessProvider: entities.CPAAPIKeyAccessProviderKeyPolicy,
+		ExternalID:     "team-a",
+		DisplayKey:     "cpa_Ab…xy12",
 	}
 	if got := helper.CPAAPIKeyDisplayName(row); got != "team-a" {
 		t.Fatalf("expected plugin id label without redact, got %q", got)
@@ -75,9 +76,10 @@ func TestCPAAPIKeyDisplayNameForPluginDoesNotRedactShortID(t *testing.T) {
 func TestCPAAPIKeyPublicDisplayNameNeverReturnsRawAPIKey(t *testing.T) {
 	// Incomplete plugin row: no ExternalID/preview — must not echo APIKey.
 	plugin := entities.CPAAPIKey{
-		ID:     7,
-		APIKey: "secret-or-id",
-		Source: entities.CPAAPIKeySourcePluginKeyPolicy,
+		ID:             7,
+		APIKey:         "secret-or-id",
+		SourceType:     entities.CPAAPIKeySourcePlugin,
+		AccessProvider: entities.CPAAPIKeyAccessProviderKeyPolicy,
 	}
 	if got := helper.CPAAPIKeyPublicDisplayName(plugin); got != "plugin-key-7" {
 		t.Fatalf("expected stable public plugin fallback, got %q", got)
@@ -86,7 +88,7 @@ func TestCPAAPIKeyPublicDisplayNameNeverReturnsRawAPIKey(t *testing.T) {
 	if got := helper.CPAAPIKeyPublicDisplayName(plugin); got != "Team" {
 		t.Fatalf("expected alias, got %q", got)
 	}
-	native := entities.CPAAPIKey{ID: 3, APIKey: "sk-alpha123456", Source: entities.CPAAPIKeySourceNative}
+	native := entities.CPAAPIKey{ID: 3, APIKey: "sk-alpha123456", SourceType: entities.CPAAPIKeySourceNative}
 	if got := helper.CPAAPIKeyPublicDisplayName(native); strings.Contains(got, "sk-alpha123456") {
 		t.Fatalf("public label leaked raw native key: %q", got)
 	}
@@ -94,10 +96,11 @@ func TestCPAAPIKeyPublicDisplayNameNeverReturnsRawAPIKey(t *testing.T) {
 
 func TestCPAAPIKeyMaskedDisplayKeyForPluginUsesPreviewOrID(t *testing.T) {
 	row := entities.CPAAPIKey{
-		APIKey:     "LiuSha",
-		Source:     entities.CPAAPIKeySourcePluginKeyPolicy,
-		ExternalID: "LiuSha",
-		DisplayKey: "cpa_Ab…xy12",
+		APIKey:         "LiuSha",
+		SourceType:     entities.CPAAPIKeySourcePlugin,
+		AccessProvider: entities.CPAAPIKeyAccessProviderKeyPolicy,
+		ExternalID:     "LiuSha",
+		DisplayKey:     "cpa_Ab…xy12",
 	}
 	if got := helper.CPAAPIKeyMaskedDisplayKey(row); got != "cpa_Ab…xy12" {
 		t.Fatalf("expected key_preview display, got %q", got)
@@ -107,7 +110,7 @@ func TestCPAAPIKeyMaskedDisplayKeyForPluginUsesPreviewOrID(t *testing.T) {
 		t.Fatalf("expected logical id fallback without *********, got %q", got)
 	}
 	// Contrast: native short values still fully mask.
-	if got := helper.CPAAPIKeyMaskedDisplayKey(entities.CPAAPIKey{APIKey: "shortkey1", Source: entities.CPAAPIKeySourceNative}); got != "*********" {
+	if got := helper.CPAAPIKeyMaskedDisplayKey(entities.CPAAPIKey{APIKey: "shortkey1", SourceType: entities.CPAAPIKeySourceNative}); got != "*********" {
 		t.Fatalf("expected native short secret mask, got %q", got)
 	}
 }

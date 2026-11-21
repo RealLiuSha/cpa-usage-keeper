@@ -76,8 +76,6 @@ func TestOrderedMigrationsPreservesExecutionOrder(t *testing.T) {
 		"20260726_usage_latency_stats",
 		"20260729_add_usage_event_client_metadata",
 		"20260730_create_usage_event_archive",
-		"20260731_local_ranking_stats",
-		"20260803_add_cpa_api_key_local_ranking_avatar",
 		"20260807_add_cpa_api_keys_source",
 		"20260813_add_auth_session_client_metadata",
 		// Errors 表已经随 main 发布，合并后的完整序列必须先保留该版本。
@@ -95,6 +93,15 @@ func TestOrderedMigrationsPreservesExecutionOrder(t *testing.T) {
 		"20260919_usage_event_stream_status_code",
 		"20260922_normalize_usage_event_parent_session_null",
 		"20260925_limit_latency_sample_points",
+		"20261008_usage_event_trace_metadata",
+		"20261009_pricing_storage_structure",
+		"20261009_remove_ranking",
+		"20261018_recover_execution_usage_events",
+		"20261020_add_auth_session_oidc_identity",
+		"20261023_usage_event_effective_service_tier",
+		"20261028_plugin_api_key_sources",
+		"20261029_usage_identity_siwc_fields",
+		"20261121_cpa_api_keys_key_policy_source_type",
 	}
 	assertStringSlicesEqual(t, want, got)
 }

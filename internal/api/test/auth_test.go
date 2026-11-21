@@ -42,10 +42,6 @@ func (s *authLoginKeyStub) FindActiveCPAAPIKeyByValue(_ context.Context, apiKey 
 	return s.row, nil
 }
 
-func (s *authLoginKeyStub) FindActiveNativeCPAAPIKeyByValue(ctx context.Context, apiKey string) (entities.CPAAPIKey, error) {
-	return s.FindActiveCPAAPIKeyByValue(ctx, apiKey)
-}
-
 func (s *authLoginKeyStub) FindActiveCPAAPIKeyByID(_ context.Context, id int64) (entities.CPAAPIKey, error) {
 	if s.findErr != nil {
 		return entities.CPAAPIKey{}, s.findErr
@@ -146,7 +142,7 @@ func TestAuthAPIKeyLoginSetsViewerSessionCookieAndSessionSummary(t *testing.T) {
 	sessionResp := serveAPIGet(router, "/cpa/api/v1/auth/session", cookies[0])
 
 	body := sessionResp.Body.String()
-	if sessionResp.Code != http.StatusOK || !strings.Contains(body, `"authenticated":true`) || !strings.Contains(body, `"role":"api_key_viewer"`) || !strings.Contains(body, `"api_key":{"display_key":"sk-*********123456","alias":"Team Key"}`) {
+	if sessionResp.Code != http.StatusOK || !strings.Contains(body, `"authenticated":true`) || !strings.Contains(body, `"role":"api_key_viewer"`) || !strings.Contains(body, `"api_key":{"id":"42","display_key":"sk-*********123456","alias":"Team Key"}`) {
 		t.Fatalf("unexpected session response: %d %s", sessionResp.Code, body)
 	}
 	if strings.Contains(body, "sk-live123456") || strings.Contains(body, "sk-l************3456") {
@@ -329,7 +325,7 @@ func TestAuthSessionManagementListsAdminAndAPIKeySessionsWithCurrentFirst(t *tes
 			t.Fatalf("missing session metadata: %+v", item)
 		}
 		for _, value := range []string{item.LoginAt, item.ExpiresAt} {
-			if _, err := time.Parse("2006/01/02 15:04:05", value); err != nil {
+			if _, err := time.Parse("2006-01-02 15:04:05", value); err != nil {
 				t.Fatalf("invalid session time %q: %v", value, err)
 			}
 		}

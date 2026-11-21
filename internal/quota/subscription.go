@@ -12,6 +12,7 @@ var subscriptionResolvers = map[string]subscriptionResolver{
 	"antigravity": resolveAntigravitySubscription,
 	"claude":      resolveClaudeSubscription,
 	"codex":       resolveCodexSubscription,
+	"meta":        resolveMetaSubscription,
 }
 
 // NormalizeSubscription 将 provider 已取得的原始结果转换为响应级订阅，不执行任何外部请求。
@@ -35,9 +36,9 @@ func NormalizeSubscription(output ProviderOutput) *SubscriptionInfo {
 	return subscription
 }
 
-// ResolveIdentitySubscription 只发布明确属于 Codex Auth File 的内部套餐 metadata。
+// ResolveIdentitySubscription 只发布明确属于 Codex Credential 的内部套餐 metadata。
 func ResolveIdentitySubscription(identity entities.UsageIdentity) *SubscriptionInfo {
-	if identity.AuthType != entities.UsageIdentityAuthTypeAuthFile {
+	if identity.AuthType != entities.UsageIdentityAuthTypeCredential {
 		return nil
 	}
 	if normalizeIdentityType(identity.Type) != "codex" && normalizeIdentityType(identity.Provider) != "codex" {

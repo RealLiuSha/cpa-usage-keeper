@@ -17,11 +17,11 @@ afterEach(() => {
 });
 
 describe('share mode path detection', () => {
-  it('resolves the three share dashboard tabs only', () => {
-    expect(SHARE_TABS).toEqual(['overview', 'analysis', 'ranking']);
+  it('resolves the two share dashboard tabs only', () => {
+    expect(SHARE_TABS).toEqual(['overview', 'analysis']);
     expect(resolveShareTab('/share/overview')).toBe('overview');
-    expect(resolveShareTab('/share/analysis/')).toBe('analysis');
-    expect(resolveShareTab('share/ranking')).toBe('ranking');
+    expect(resolveShareTab('share/analysis/')).toBe('analysis');
+    expect(resolveShareTab('/share/ranking')).toBeNull();
     expect(resolveShareTab('/share/events')).toBeNull();
     expect(resolveShareTab('/share/settings')).toBeNull();
     expect(isShareTab('overview')).toBe(true);
@@ -47,9 +47,7 @@ describe('share public API routing', () => {
     });
     expect(isSharePublicAPIEnabled()).toBe(true);
     expect(apiPath('/usage/overview')).toBe('/keeper/api/v1/public/usage/overview');
-    expect(apiPath('/ranking/local/leaderboards?period=today&metric=overall')).toBe(
-      '/keeper/api/v1/public/ranking/local/leaderboards?period=today&metric=overall',
-    );
+    expect(apiPath('/usage/api-keys/options?scope=overview')).toBe('/keeper/api/v1/public/usage/api-keys/options?scope=overview');
     expect(apiPath('/usage/api-keys/settings')).toBe('/keeper/api/v1/usage/api-keys/settings');
     expect(apiPath('/usage/events')).toBe('/keeper/api/v1/usage/events');
   });
@@ -73,29 +71,6 @@ describe('share public API routing', () => {
     // No setSharePublicAPIEnabled — pure location derivation.
     expect(prepareShareModeFromLocation(window.location.pathname, window.__APP_BASE_PATH__)).toBe('analysis');
     expect(apiPath('/usage/analysis')).toBe('/keeper/api/v1/public/usage/analysis');
-    expect(apiPath('/ranking/local/leaderboards?period=today&metric=overall')).toBe(
-      '/keeper/api/v1/public/ranking/local/leaderboards?period=today&metric=overall',
-    );
-  });
-
-  it('routes fetchLocalRankingLeaderboard through public prefix when share mode is on', async () => {
-    vi.stubGlobal('window', {
-      __APP_BASE_PATH__: '/keeper',
-      __SHARE_PUBLIC_ENABLED__: true,
-      location: { pathname: '/keeper/share/ranking' },
-    });
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      period: 'today',
-      metric: 'overall',
-      entries: [],
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const { fetchLocalRankingLeaderboard } = await import('@/features/ranking/api');
-    await fetchLocalRankingLeaderboard('today', 'overall');
-
-    const requested = String(fetchMock.mock.calls[0]?.[0] ?? '');
-    expect(requested).toContain('/keeper/api/v1/public/ranking/local/leaderboards?period=today&metric=overall');
   });
 
   it('keeps public API routing while tab URL stays under /share/*', () => {
@@ -107,8 +82,8 @@ describe('share public API routing', () => {
     });
     expect(apiPath('/usage/overview')).toContain('/public/');
     // Simulate handleTabChange writing another share tab path.
-    location.pathname = '/keeper/share/ranking';
-    expect(apiPath('/ranking/local/leaderboards?period=today&metric=overall')).toContain('/public/');
+    location.pathname = '/keeper/share/analysis';
+    expect(apiPath('/usage/analysis?range=24h')).toContain('/public/');
     // Leaving /share/* silently returns to admin API surface — invariant for future routing.
     location.pathname = '/keeper/';
     expect(apiPath('/usage/overview')).toBe('/keeper/api/v1/usage/overview');
@@ -116,11 +91,11 @@ describe('share public API routing', () => {
 });
 
 describe('share mode tab options', () => {
-  it('only exposes overview, analysis, and ranking', () => {
+  it('only exposes overview and analysis', () => {
     const values = getUsageTabOptions((key) => key, { shareMode: true }).map((option) => option.value);
-    expect(values).toEqual(['overview', 'analysis', 'ranking']);
+    expect(values).toEqual(['overview', 'analysis']);
     expect(values).not.toContain('events');
-    expect(values).not.toContain('auth-files');
+    expect(values).not.toContain('credentials');
     expect(values).not.toContain('ai-provider');
     expect(values).not.toContain('settings');
   });

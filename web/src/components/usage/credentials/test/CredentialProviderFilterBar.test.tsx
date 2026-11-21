@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { CredentialProviderFilterBar } from '../CredentialProviderFilterBar'
+import museIcon from '@/assets/icons/muse.svg'
+import metaIcon from '@/assets/icons/meta.svg'
 
 vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: () => undefined },
@@ -28,32 +30,47 @@ describe('CredentialProviderFilterBar', () => {
     expect(html).toContain('>2</span>')
   })
 
-  it('keeps the xAI Auth Files filter available', () => {
+  it('keeps the xAI Credentials filter available', () => {
     const html = renderToStaticMarkup(
-      <CredentialProviderFilterBar scope="auth-files" typeCounts={[{ type: 'xai', count: 1 }]} value="all" onChange={() => undefined} />,
+      <CredentialProviderFilterBar scope="credentials" typeCounts={[{ type: 'xai', count: 1 }]} value="all" onChange={() => undefined} />,
     )
     expect(html).toContain('usage_stats.credentials_filter_xai')
     expect(html).toContain('data-provider-brand-icon="xai"')
   })
 
-  it('renders Devin for Auth Files and Meta for AI Providers', () => {
-    const authFilesHtml = renderToStaticMarkup(
-      <CredentialProviderFilterBar scope="auth-files" typeCounts={[{ type: 'devin', count: 2 }]} value="all" onChange={() => undefined} />,
+  it('renders Devin for Credentials and Meta for AI Providers', () => {
+    const credentialsHtml = renderToStaticMarkup(
+      <CredentialProviderFilterBar scope="credentials" typeCounts={[{ type: 'devin', count: 2 }]} value="all" onChange={() => undefined} />,
     )
     const providersHtml = renderToStaticMarkup(
       <CredentialProviderFilterBar scope="ai-provider" typeCounts={[{ type: 'meta', count: 3 }]} value="all" onChange={() => undefined} />,
     )
 
-    expect(authFilesHtml).toContain('usage_stats.credentials_filter_devin')
-    expect(authFilesHtml).toContain('data-provider-brand-icon="devin"')
+    expect(credentialsHtml).toContain('usage_stats.credentials_filter_devin')
+    expect(credentialsHtml).toContain('data-provider-brand-icon="devin"')
     expect(providersHtml).toContain('usage_stats.credentials_filter_meta')
     expect(providersHtml).toContain('data-provider-brand-icon="meta"')
+  })
+
+  it('renders Muse for Meta authentication files without changing the AI Provider brand', () => {
+    const props = { typeCounts: [{ type: 'meta', count: 3 }], value: 'meta' as const, onChange: () => undefined }
+    const credentialsHtml = renderToStaticMarkup(<CredentialProviderFilterBar scope="credentials" {...props} />)
+    const providersHtml = renderToStaticMarkup(<CredentialProviderFilterBar scope="ai-provider" {...props} />)
+
+    expect(credentialsHtml).toContain('usage_stats.credentials_filter_muse')
+    expect(credentialsHtml).toContain('data-provider-brand-icon="muse"')
+    expect(credentialsHtml).toContain(renderToStaticMarkup(<img src={museIcon} alt="" />).match(/src="[^"]+"/)![0])
+    expect(credentialsHtml).not.toContain('data-provider-brand-icon="meta"')
+    expect(providersHtml).toContain('usage_stats.credentials_filter_meta')
+    expect(providersHtml).toContain('data-provider-brand-icon="meta"')
+    expect(providersHtml).toContain(renderToStaticMarkup(<img src={metaIcon} alt="" />).match(/src="[^"]+"/)![0])
+    expect(providersHtml).not.toContain('data-provider-brand-icon="muse"')
   })
 
   it('renders Kimi, Vertex, and Gemini CLI branding without iFlow', () => {
     const html = renderToStaticMarkup(
       <CredentialProviderFilterBar
-        scope="auth-files"
+        scope="credentials"
         typeCounts={[
           { type: 'kimi', count: 2 },
           { type: 'vertex', count: 3 },

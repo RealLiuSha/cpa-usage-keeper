@@ -114,11 +114,11 @@ func TestCPAAPIKeyQueriesFilterDeletedRows(t *testing.T) {
 		t.Fatalf("expected deleted id to be hidden, got %v", err)
 	}
 
-	row, err := repository.FindActiveNativeCPAAPIKeyByValue(db, "sk-alpha123456")
+	row, err := repository.FindActiveCPAAPIKeyByValue(db, "sk-alpha123456")
 	if err != nil || row.ID != 1 {
 		t.Fatalf("expected active key lookup by value to return row 1, got %+v err=%v", row, err)
 	}
-	_, err = repository.FindActiveNativeCPAAPIKeyByValue(db, "sk-beta654321")
+	_, err = repository.FindActiveCPAAPIKeyByValue(db, "sk-beta654321")
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("expected deleted value lookup to be hidden, got %v", err)
 	}

@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -11,6 +12,9 @@ const sensitiveValueMask = "*********"
 
 // RedactSensitiveValue 使用统一格式隐藏前端展示中的敏感值：长值保留前 3 位和后 6 位，短值全隐藏。
 func RedactSensitiveValue(value string) string {
+	if IsPluginAPIKeyGroupKey(value) {
+		return "Third-party Identity"
+	}
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || trimmed == "unknown" {
 		return "unknown"
@@ -24,9 +28,9 @@ func RedactSensitiveValue(value string) string {
 
 // CPAAPIKeyMaskedDisplayKey 返回 CPA API Key 的安全展示 key。
 // native：优先基于原始 secret 重新脱敏，避免历史 DisplayKey 格式不一致。
-// plugin：api_key 是逻辑 id，不得走 secret 脱敏（短 id 会变成 *********）。
+// key-policy：api_key 是逻辑 id，不得走 secret 脱敏（短 id 会变成 *********）；其他插件身份只显示本地编号。
 func CPAAPIKeyMaskedDisplayKey(row entities.CPAAPIKey) string {
-	if entities.IsPluginKeyPolicySource(row.Source) {
+	if row.IsKeyPolicyCatalog() {
 		if preview := strings.TrimSpace(row.DisplayKey); preview != "" {
 			return preview
 		}
@@ -37,6 +41,9 @@ func CPAAPIKeyMaskedDisplayKey(row entities.CPAAPIKey) string {
 			return apiKey
 		}
 		return "unknown"
+	}
+	if row.SourceType == entities.CPAAPIKeySourcePlugin {
+		return fmt.Sprintf("Third-party Identity #%d", row.ID)
 	}
 	if strings.TrimSpace(row.APIKey) != "" {
 		return RedactSensitiveValue(row.APIKey)
@@ -49,7 +56,7 @@ func CPAAPIKeyDisplayName(row entities.CPAAPIKey) string {
 	if strings.TrimSpace(row.KeyAlias) != "" {
 		return strings.TrimSpace(row.KeyAlias)
 	}
-	if entities.IsPluginKeyPolicySource(row.Source) {
+	if row.IsKeyPolicyCatalog() {
 		if externalID := strings.TrimSpace(row.ExternalID); externalID != "" {
 			return externalID
 		}
@@ -66,7 +73,7 @@ func CPAAPIKeyPublicDisplayName(row entities.CPAAPIKey) string {
 	if alias := strings.TrimSpace(row.KeyAlias); alias != "" {
 		return alias
 	}
-	if entities.IsPluginKeyPolicySource(row.Source) {
+	if row.IsKeyPolicyCatalog() {
 		if externalID := strings.TrimSpace(row.ExternalID); externalID != "" {
 			return externalID
 		}

@@ -12,122 +12,6 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestSyncCPAAPIKeysCreatesRowsWithDisplayKeyAndEmptyAlias(t *testing.T) {
-	db := openCPAAPIKeyTestDatabase(t)
-	syncedAt := time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC)
-
-	if err := SyncCPAAPIKeys(db, []string{"sk-alpha123456"}, syncedAt); err != nil {
-		t.Fatalf("SyncCPAAPIKeys returned error: %v", err)
-	}
-
-	var row entities.CPAAPIKey
-	if err := db.Where("api_key = ?", "sk-alpha123456").First(&row).Error; err != nil {
-		t.Fatalf("expected synced key row: %v", err)
-	}
-	if row.DisplayKey != "sk-*********123456" || row.KeyAlias != "" || row.IsDeleted {
-		t.Fatalf("unexpected row after sync: %+v", row)
-	}
-	if row.Source != entities.CPAAPIKeySourceNative || !row.Enabled {
-		t.Fatalf("expected native enabled row, got %+v", row)
-	}
-	if row.LastSyncedAt == nil || !row.LastSyncedAt.Equal(syncedAt) {
-		t.Fatalf("unexpected last synced at: %+v", row.LastSyncedAt)
-	}
-}
-
-func TestSyncCPAAPIKeysPreservesAliasAndMarksMissingRowsDeleted(t *testing.T) {
-	db := openCPAAPIKeyTestDatabase(t)
-	firstSync := time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC)
-	secondSync := firstSync.Add(time.Hour)
-
-	if err := SyncCPAAPIKeys(db, []string{"sk-alpha123456", "sk-beta654321"}, firstSync); err != nil {
-		t.Fatalf("initial sync returned error: %v", err)
-	}
-	if err := UpdateCPAAPIKeyAlias(db, 1, "Primary Key"); err != nil {
-		t.Fatalf("UpdateCPAAPIKeyAlias returned error: %v", err)
-	}
-	if err := SyncCPAAPIKeys(db, []string{"sk-alpha123456"}, secondSync); err != nil {
-		t.Fatalf("second sync returned error: %v", err)
-	}
-
-	var active entities.CPAAPIKey
-	if err := db.Where("api_key = ?", "sk-alpha123456").First(&active).Error; err != nil {
-		t.Fatalf("expected active key: %v", err)
-	}
-	if active.KeyAlias != "Primary Key" || active.IsDeleted {
-		t.Fatalf("expected alias to be preserved on active row, got %+v", active)
-	}
-
-	var deleted entities.CPAAPIKey
-	if err := db.Where("api_key = ?", "sk-beta654321").First(&deleted).Error; err != nil {
-		t.Fatalf("expected deleted key: %v", err)
-	}
-	if !deleted.IsDeleted {
-		t.Fatalf("expected missing key to be marked deleted: %+v", deleted)
-	}
-}
-
-func TestSyncCPAAPIKeysRestoresDeletedRowsAndDeduplicatesInput(t *testing.T) {
-	db := openCPAAPIKeyTestDatabase(t)
-
-	if err := SyncCPAAPIKeys(db, []string{"sk-alpha123456"}, time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatalf("initial sync returned error: %v", err)
-	}
-	if err := UpdateCPAAPIKeyAlias(db, 1, "Primary Key"); err != nil {
-		t.Fatalf("UpdateCPAAPIKeyAlias returned error: %v", err)
-	}
-	if err := SyncCPAAPIKeys(db, nil, time.Date(2026, 5, 13, 11, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatalf("empty sync returned error: %v", err)
-	}
-	if err := SyncCPAAPIKeys(db, []string{"sk-alpha123456", "sk-alpha123456"}, time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatalf("restore sync returned error: %v", err)
-	}
-
-	var rows []entities.CPAAPIKey
-	if err := db.Where("api_key = ?", "sk-alpha123456").Find(&rows).Error; err != nil {
-		t.Fatalf("query rows returned error: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("expected deduplicated row count 1, got %d", len(rows))
-	}
-	if rows[0].IsDeleted || rows[0].KeyAlias != "Primary Key" {
-		t.Fatalf("expected restored row to preserve alias, got %+v", rows[0])
-	}
-}
-
-func TestCPAAPIKeyQueriesFilterDeletedRows(t *testing.T) {
-	db := openCPAAPIKeyTestDatabase(t)
-
-	if err := SyncCPAAPIKeys(db, []string{"sk-alpha123456", "sk-beta654321"}, time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatalf("sync returned error: %v", err)
-	}
-	if err := SyncCPAAPIKeys(db, []string{"sk-alpha123456"}, time.Date(2026, 5, 13, 11, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatalf("second sync returned error: %v", err)
-	}
-
-	rows, err := ListActiveCPAAPIKeys(db)
-	if err != nil {
-		t.Fatalf("ListActiveCPAAPIKeys returned error: %v", err)
-	}
-	if len(rows) != 1 || rows[0].APIKey != "sk-alpha123456" {
-		t.Fatalf("unexpected active rows: %+v", rows)
-	}
-
-	_, err = FindActiveCPAAPIKeyByID(db, 2)
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		t.Fatalf("expected deleted id to be hidden, got %v", err)
-	}
-
-	row, err := FindActiveNativeCPAAPIKeyByValue(db, "sk-alpha123456")
-	if err != nil || row.ID != 1 {
-		t.Fatalf("expected active key lookup by value to return row 1, got %+v err=%v", row, err)
-	}
-	_, err = FindActiveNativeCPAAPIKeyByValue(db, "sk-beta654321")
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		t.Fatalf("expected deleted value lookup to be hidden, got %v", err)
-	}
-}
-
 // Gate A: native sync must not soft-delete plugin rows (H1 / fact-2).
 func TestSyncCPAAPIKeysDoesNotSoftDeletePluginRows(t *testing.T) {
 	db := openCPAAPIKeyTestDatabase(t)
@@ -151,7 +35,7 @@ func TestSyncCPAAPIKeysDoesNotSoftDeletePluginRows(t *testing.T) {
 	if err := db.Where("api_key = ?", "team-a").First(&plugin).Error; err != nil {
 		t.Fatalf("load plugin row: %v", err)
 	}
-	if plugin.IsDeleted || plugin.Source != entities.CPAAPIKeySourcePluginKeyPolicy {
+	if plugin.IsDeleted || !plugin.IsKeyPolicyCatalog() {
 		t.Fatalf("plugin row must remain active after native-only sync, got %+v", plugin)
 	}
 
@@ -274,46 +158,8 @@ func TestSyncPluginKeyPolicyKeysRevivesSoftDeletedRowWithSameID(t *testing.T) {
 }
 
 // Gate: empty/NULL source historical rows stay under native management (H8 / fact-6).
-func TestSyncCPAAPIKeysManagesEmptySourceHistoricalRows(t *testing.T) {
-	db := openCPAAPIKeyTestDatabase(t)
-	syncedAt := time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC)
-
-	// Insert a legacy-style row with empty source (simulates pre-migration or failed backfill).
-	if err := db.Exec(
-		`INSERT INTO cpa_api_keys (api_key, display_key, key_alias, source, external_id, enabled, is_deleted, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		"sk-legacy-empty", "sk-*********empty", "", "", "", true, false, syncedAt, syncedAt,
-	).Error; err != nil {
-		t.Fatalf("seed empty-source row: %v", err)
-	}
-
-	// Native sync without this key must soft-delete it (empty source is native).
-	if err := SyncCPAAPIKeys(db, []string{"sk-other"}, syncedAt.Add(time.Hour)); err != nil {
-		t.Fatalf("native sync: %v", err)
-	}
-	var legacy entities.CPAAPIKey
-	if err := db.Where("api_key = ?", "sk-legacy-empty").First(&legacy).Error; err != nil {
-		t.Fatalf("load legacy: %v", err)
-	}
-	if !legacy.IsDeleted {
-		t.Fatalf("empty-source historical row must be managed by native stale scan: %+v", legacy)
-	}
-
-	// Revive via native list; login lookup must succeed for empty-source (after revive + source fill).
-	if err := SyncCPAAPIKeys(db, []string{"sk-legacy-empty"}, syncedAt.Add(2*time.Hour)); err != nil {
-		t.Fatalf("native revive: %v", err)
-	}
-	row, err := FindActiveNativeCPAAPIKeyByValue(db, "sk-legacy-empty")
-	if err != nil {
-		t.Fatalf("login lookup for historical native must succeed: %v", err)
-	}
-	if row.APIKey != "sk-legacy-empty" || row.IsDeleted {
-		t.Fatalf("unexpected login row: %+v", row)
-	}
-}
-
 // Gate: plugin logical id must not authenticate (H4 / fact-7 repository side).
-func TestFindActiveNativeCPAAPIKeyByValueRejectsPluginIDs(t *testing.T) {
+func TestFindActiveCPAAPIKeyByValueRejectsPluginIDs(t *testing.T) {
 	db := openCPAAPIKeyTestDatabase(t)
 	syncedAt := time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC)
 
@@ -326,11 +172,11 @@ func TestFindActiveNativeCPAAPIKeyByValueRejectsPluginIDs(t *testing.T) {
 		t.Fatalf("native seed: %v", err)
 	}
 
-	_, err := FindActiveNativeCPAAPIKeyByValue(db, "team-a")
+	_, err := FindActiveCPAAPIKeyByValue(db, "team-a")
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("plugin id must not login, got %v", err)
 	}
-	row, err := FindActiveNativeCPAAPIKeyByValue(db, "sk-native-alpha")
+	row, err := FindActiveCPAAPIKeyByValue(db, "sk-native-alpha")
 	if err != nil || row.APIKey != "sk-native-alpha" {
 		t.Fatalf("native login must succeed: row=%+v err=%v", row, err)
 	}
@@ -354,7 +200,7 @@ func TestSyncPluginKeyPolicyKeysSkipsNativeOwnedAPIKey(t *testing.T) {
 	if err := db.Where("api_key = ?", "team-a").First(&row).Error; err != nil {
 		t.Fatalf("load row: %v", err)
 	}
-	if row.Source != entities.CPAAPIKeySourceNative {
+	if row.SourceType != entities.CPAAPIKeySourceNative {
 		t.Fatalf("first-come-first-served: source must stay native, got %+v", row)
 	}
 	if row.KeyAlias == "Plugin Team" {
@@ -380,7 +226,7 @@ func TestSyncCPAAPIKeysSkipsPluginOwnedAPIKey(t *testing.T) {
 	if err := db.Where("api_key = ?", "shared-id").First(&shared).Error; err != nil {
 		t.Fatalf("load shared: %v", err)
 	}
-	if shared.Source != entities.CPAAPIKeySourcePluginKeyPolicy {
+	if !shared.IsKeyPolicyCatalog() {
 		t.Fatalf("plugin occupancy must not be flipped to native: %+v", shared)
 	}
 	if shared.KeyAlias != "Plugin Owner" {
@@ -391,7 +237,7 @@ func TestSyncCPAAPIKeysSkipsPluginOwnedAPIKey(t *testing.T) {
 	if err := db.Where("api_key = ?", "sk-other").First(&other).Error; err != nil {
 		t.Fatalf("expected other native key: %v", err)
 	}
-	if other.Source != entities.CPAAPIKeySourceNative {
+	if other.SourceType != entities.CPAAPIKeySourceNative {
 		t.Fatalf("unrelated native key: %+v", other)
 	}
 }
@@ -419,8 +265,8 @@ func TestSyncPluginKeyPolicyKeysCreatesIdentityFromCatalog(t *testing.T) {
 	if row.APIKey != "team-a" || row.ExternalID != "team-a" {
 		t.Fatalf("match key must be trimmed logical id, got %+v", row)
 	}
-	if row.Source != entities.CPAAPIKeySourcePluginKeyPolicy {
-		t.Fatalf("source: got %q", row.Source)
+	if !row.IsKeyPolicyCatalog() {
+		t.Fatalf("source: got %q %q", row.SourceType, row.AccessProvider)
 	}
 	if row.KeyAlias != "Team A" || row.DisplayKey != "cpa_Ab…xy12" || !row.Enabled {
 		t.Fatalf("catalog fields: %+v", row)
@@ -457,30 +303,6 @@ func TestSyncPluginKeyPolicyKeysCreatesDisabledKeysWithoutDefaultTag(t *testing.
 	}
 	if !on.Enabled {
 		t.Fatalf("enabled=true must persist, got %+v", on)
-	}
-}
-
-func TestSyncCPAAPIKeysDoesNotConsumeIDsForExistingKeys(t *testing.T) {
-	db := openCPAAPIKeyTestDatabase(t)
-
-	if err := SyncCPAAPIKeys(db, []string{"sk-alpha123456"}, time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatalf("initial sync returned error: %v", err)
-	}
-	for i := 0; i < 5; i++ {
-		if err := SyncCPAAPIKeys(db, []string{"sk-alpha123456"}, time.Date(2026, 5, 13, 11, i, 0, 0, time.UTC)); err != nil {
-			t.Fatalf("repeat sync returned error: %v", err)
-		}
-	}
-	if err := SyncCPAAPIKeys(db, []string{"sk-alpha123456", "sk-beta654321"}, time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatalf("new key sync returned error: %v", err)
-	}
-
-	var row entities.CPAAPIKey
-	if err := db.Where("api_key = ?", "sk-beta654321").First(&row).Error; err != nil {
-		t.Fatalf("expected new key row: %v", err)
-	}
-	if row.ID != 2 {
-		t.Fatalf("expected second key id to be 2 without upsert sequence burn, got %d", row.ID)
 	}
 }
 
