@@ -37,7 +37,10 @@ func isCostReadRoute(method, path string) bool {
 		case "/api/v1/usage/overview", "/api/v1/usage/overview/comparisons", "/api/v1/usage/overview/realtime",
 			"/api/v1/usage/analysis", "/api/v1/usage/events", "/api/v1/usage/events/export",
 			"/api/v1/key-overview", "/api/v1/key-overview/comparisons", "/api/v1/key-overview/realtime",
-			"/api/v1/key-analysis", "/api/v1/quota/history/:auth_index", "/api/v1/quota/refresh/:auth_index":
+			"/api/v1/key-analysis", "/api/v1/quota/history/:auth_index", "/api/v1/quota/refresh/:auth_index",
+			// Anonymous share reads of the same fee results.
+			"/api/v1/public/usage/overview", "/api/v1/public/usage/overview/comparisons", "/api/v1/public/usage/overview/realtime",
+			"/api/v1/public/usage/analysis":
 			return true
 		}
 	case http.MethodPost:

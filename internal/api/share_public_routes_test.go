@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cpa-usage-keeper/internal/auth"
+	"cpa-usage-keeper/internal/service"
 	servicedto "cpa-usage-keeper/internal/service/dto"
 )
 
@@ -132,6 +133,33 @@ func TestAdminOnlyRoutesStillRequireAuthWhenSharePublicExists(t *testing.T) {
 		router.ServeHTTP(resp, req)
 		if resp.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s: expected 401, got %d body=%s", tc.method, tc.path, resp.Code, resp.Body.String())
+		}
+	}
+}
+
+func TestPublicShareFeeReadsWaitForCostBackfill(t *testing.T) {
+	gate := service.NewCostReadGate()
+	resume, err := gate.BlockAndDrain(context.Background())
+	if err != nil {
+		t.Fatalf("block fee reads: %v", err)
+	}
+	t.Cleanup(resume)
+	config := AuthConfig{Enabled: true, LoginPassword: "secret", SessionTTL: time.Hour}
+	router := NewRouter(nil, statusStub{}, &shareUsageStub{}, nil, config, NewAuthHandler(config, auth.NewSessionManager(time.Hour)), "/keeper", OptionalProviders{
+		CostReadGate:       gate,
+		SharePublicEnabled: true,
+	})
+
+	for path, want := range map[string]int{
+		"/keeper/api/v1/public/usage/overview?range=24h":             http.StatusServiceUnavailable,
+		"/keeper/api/v1/public/usage/overview/comparisons?range=24h": http.StatusServiceUnavailable,
+		"/keeper/api/v1/public/usage/analysis?range=24h":             http.StatusServiceUnavailable,
+		"/keeper/api/v1/public/usage/activity?window=day":            http.StatusOK,
+	} {
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, path, nil))
+		if resp.Code != want {
+			t.Fatalf("%s: expected %d, got %d body=%s", path, want, resp.Code, resp.Body.String())
 		}
 	}
 }

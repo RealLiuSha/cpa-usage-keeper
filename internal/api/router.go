@@ -149,7 +149,7 @@ func NewRouter(
 	if sharePublicEnabled {
 		publicRead := apiV1.Group("/public")
 		publicLimiter := newPublicReadRateLimiter()
-		publicRead.Use(publicReadNoStoreMiddleware(), publicLimiter.Middleware())
+		publicRead.Use(publicReadNoStoreMiddleware(), publicLimiter.Middleware(), costReadMiddleware(costReadGate, basePath))
 		registerPublicUsageOverviewRoute(publicRead, usageProvider, cpaAPIKeyProvider)
 		registerUsageActivityRoute(publicRead, usageProvider)
 		registerPublicUsageAnalysisRoute(publicRead, usageProvider, cpaAPIKeyProvider)

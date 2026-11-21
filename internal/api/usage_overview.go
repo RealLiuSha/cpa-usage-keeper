@@ -181,7 +181,7 @@ func registerKeyOverviewRoute(router gin.IRoutes, usageProvider service.UsagePro
 			return
 		}
 		filter.APIKeyID = fmt.Sprintf("%d", session.CPAAPIKeyID)
-		writeUsageOverviewComparisonsResponse(c, usageProvider, filter, nil, true, &viewerKey)
+		writeUsageOverviewComparisonsResponse(c, usageProvider, filter, nil, false, true, &viewerKey)
 	})
 	router.GET("/key-overview/realtime", func(c *gin.Context) {
 		session, _, ok := activeAPIKeyViewerContext(c)
@@ -231,7 +231,7 @@ func registerUsageOverviewRouteWithLabelMode(
 			writeUsageFilterParseError(c, err)
 			return
 		}
-		writeUsageOverviewComparisonsResponse(c, usageProvider, filter, cpaAPIKeyProvider, false, nil)
+		writeUsageOverviewComparisonsResponse(c, usageProvider, filter, cpaAPIKeyProvider, publicSafeLabels, false, nil)
 	})
 	router.GET("/usage/overview/realtime", func(c *gin.Context) {
 		filter, err := parseUsageRealtimeFilterQuery(c.Request, timeutil.NormalizeStorageTime(time.Now()))
@@ -243,7 +243,7 @@ func registerUsageOverviewRouteWithLabelMode(
 	})
 }
 
-func writeUsageOverviewComparisonsResponse(c *gin.Context, usageProvider service.UsageProvider, filter servicedto.UsageFilter, cpaAPIKeyProvider service.CPAAPIKeyProvider, keyViewer bool, viewerKey *entities.CPAAPIKey) {
+func writeUsageOverviewComparisonsResponse(c *gin.Context, usageProvider service.UsageProvider, filter servicedto.UsageFilter, cpaAPIKeyProvider service.CPAAPIKeyProvider, publicSafeLabels bool, keyViewer bool, viewerKey *entities.CPAAPIKey) {
 	comparisonProvider, ok := usageProvider.(service.UsageComparisonProvider)
 	if !ok {
 		c.JSON(http.StatusOK, buildUsageOverviewComparisons(nil, nil))
@@ -254,7 +254,7 @@ func writeUsageOverviewComparisonsResponse(c *gin.Context, usageProvider service
 		writeUsageProviderError(c, "get usage overview comparisons failed", err)
 		return
 	}
-	apiKeyInfos, err := loadCPAAPIKeyInfos(c, cpaAPIKeyProvider, false)
+	apiKeyInfos, err := loadCPAAPIKeyInfos(c, cpaAPIKeyProvider, publicSafeLabels)
 	if err != nil {
 		return
 	}
